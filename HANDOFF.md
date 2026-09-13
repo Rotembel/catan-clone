@@ -228,8 +228,8 @@ in all 7 packages.
    Deserter/Diplomat/Intrigue/Wedding/Saboteur/Commercial Harbor itself (holds
    them), and never displaces a knight on purpose.
    **Client (human-playable):** tap one of your knights → menu with Activate /
-   Promote / Move (Move highlights free and displaceable targets; displaceable
-   enemy knights are marked); "Build knight" button highlights legal vertices;
+   Promote / Move (Move highlights every legal target vertex, including ones
+   occupied by a weaker enemy knight — no separate marking yet); "Build knight" button highlights legal vertices;
    responses auto-enter a board mode (vertex or edge targets, Decline where the
    rules allow) or open a mandatory list picker; forced discards reuse the discard
    dialog with the reason in the title; Diplomat picks its road on the board; the
