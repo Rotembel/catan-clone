@@ -5,6 +5,7 @@ import type { RuleSet } from "@catan/shared";
 import type { RngState } from "@catan/engine";
 import { createBaseRuleSet, type BaseRuleSetOptions } from "./base.js";
 import { FRIENDS_NIGHT_ID, createFriendsNightRuleSet } from "./variants/friendsNight.js";
+import { CITIES_AND_KNIGHTS_ID, createCitiesAndKnightsRuleSet } from "./citiesAndKnights.js";
 
 export interface RuleSetInfo {
   id: string;
@@ -26,6 +27,12 @@ export const RULE_SETS: readonly RuleSetInfo[] = [
     label: "Friends' night",
     description: "Base game, plus development cards can be traded between players.",
     create: createFriendsNightRuleSet,
+  },
+  {
+    id: CITIES_AND_KNIGHTS_ID,
+    label: "Cities & Knights (in progress)",
+    description: "Commodities and city improvements; second placement is a city; 13 points to win. Knights, barbarians and progress cards are coming.",
+    create: createCitiesAndKnightsRuleSet,
   },
 ];
 

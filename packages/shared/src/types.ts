@@ -6,6 +6,15 @@
 
 export type Resource = "wood" | "brick" | "sheep" | "wheat" | "ore";
 
+/** Cities & Knights: the second card layer, produced only by cities. */
+export type Commodity = "cloth" | "coin" | "paper";
+/** Anything that can sit in a hand, be traded, discarded, or stolen. */
+export type Card = Resource | Commodity;
+export type CardCounts = Partial<Record<Card, number>>;
+
+/** Cities & Knights city-improvement tracks. */
+export type ImprovementTrack = "trade" | "politics" | "science";
+
 /** Opaque canonical id for a board hex — see engine/board for how these are derived. */
 export type HexId = string;
 /** Opaque canonical id for a settlement/city spot (a hex-grid vertex). */
@@ -58,6 +67,27 @@ export interface DevCardDef {
   kind: "knight" | "victoryPoint" | "progress";
 }
 
+/**
+ * Cities & Knights (SPEC.md §7 Phase 5), as data. Present on a RuleSet =
+ * the expansion is on; every reducer branch keys off this block, so the
+ * base game never sees any of it. Later slices (event die, barbarians,
+ * knights, progress cards, metropolises) add fields here.
+ */
+export interface CitiesAndKnightsRules {
+  /** A city on one of these hexes yields 1 resource + 1 commodity instead of 2 resources. */
+  commodityFor: Partial<Record<Resource, Commodity>>;
+  /** Which commodity pays for each improvement track. */
+  trackCommodity: Record<ImprovementTrack, Commodity>;
+  /** Cost of each improvement level in that track's commodity; index 0 = level 1. */
+  improvementCosts: number[];
+  /** Trade level from which commodities trade 2:1 with the bank (the trading house). */
+  commodityPortLevel: number;
+  /** The second opening placement is a city, not a settlement. */
+  setupSecondPlacementIsCity: boolean;
+  /** How many of each commodity the bank starts with. */
+  commodityBankPerType: number;
+}
+
 export interface RuleSet {
   id: string;
   victoryPoints: number;
@@ -65,6 +95,8 @@ export interface RuleSet {
   devCards: DevCardDef[];
   board: BoardLayout;
   houseRules: HouseRules;
+  /** Undefined = base game. */
+  citiesAndKnights?: CitiesAndKnightsRules;
 }
 
 // ---------------------------------------------------------------------------
@@ -99,6 +131,10 @@ export interface Player {
   playedKnights: number;
   /** Public victory points only — hidden VP dev cards are not included. */
   victoryPoints: number;
+  /** Cities & Knights; all zero in a base game. */
+  commodities: Record<Commodity, number>;
+  /** Cities & Knights improvement level per track (0-5); all zero in a base game. */
+  improvements: Record<ImprovementTrack, number>;
 }
 
 export interface Building {
@@ -117,8 +153,9 @@ export interface TradeOffer {
   fromPlayerId: number;
   /** undefined = a bank/port trade, resolved immediately by proposeTrade itself. */
   toPlayerId?: number;
-  give: Partial<Record<Resource, number>>;
-  receive: Partial<Record<Resource, number>>;
+  /** Resources, plus commodities when Cities & Knights is on. */
+  give: CardCounts;
+  receive: CardCounts;
   /** Only meaningful when ruleSet.houseRules.tradeDevCards is on. */
   giveDevCards?: string[];
   receiveDevCards?: string[];
@@ -132,6 +169,8 @@ export interface GameState {
   /** Remaining dev card ids, seeded-shuffled. */
   devDeck: string[];
   bank: Record<Resource, number>;
+  /** Cities & Knights commodity supply; all zero in a base game. */
+  commodityBank: Record<Commodity, number>;
   dice?: [number, number];
   pendingTrade?: TradeOffer;
   /** Player ids that still owe a discard during the "discard" phase. */
@@ -169,7 +208,9 @@ export type Action =
   | { type: "proposeTrade"; offer: TradeOffer }
   | { type: "respondTrade"; accept: boolean }
   | { type: "moveRobber"; hex: HexId; stealFrom?: number }
-  | { type: "discardCards"; discard: Partial<Record<Resource, number>> }
+  | { type: "discardCards"; discard: CardCounts }
+  /** Cities & Knights: buy the next level on an improvement track. */
+  | { type: "buildImprovement"; track: ImprovementTrack }
   | { type: "endTurn" };
 
 // playDevCard payloads, keyed by cardId — kept separate from the Action

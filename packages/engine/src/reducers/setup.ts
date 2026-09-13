@@ -1,6 +1,8 @@
 // The opening placement phase: settlement, road, settlement, road, in
-// snake order (1..N then N..1). The second settlement pays out its
-// surrounding hexes, per the official rule.
+// snake order (1..N then N..1). The second placement pays out its
+// surrounding hexes, per the official rule. With Cities & Knights on, that
+// second placement is a city (and still pays one resource per hex — no
+// commodities at setup).
 
 import type { EdgeId, GameState, Resource, RuleSet, VertexId } from "@catan/shared";
 import { getGeometry } from "../geometryCache.js";
@@ -29,12 +31,14 @@ export function placeSetupSettlement(
   }
 
   const isSecond = state.turn.phase === "setupSettlement2";
+  const kind =
+    isSecond && ruleSet.citiesAndKnights?.setupSecondPlacementIsCity ? "city" : "settlement";
 
   let next: GameState = {
     ...state,
     board: {
       ...state.board,
-      buildings: { ...state.board.buildings, [vertex]: { playerId, kind: "settlement" } },
+      buildings: { ...state.board.buildings, [vertex]: { playerId, kind } },
     },
     setupLastSettlement: vertex,
     turn: { ...state.turn, phase: isSecond ? "setupRoad2" : "setupRoad1" },

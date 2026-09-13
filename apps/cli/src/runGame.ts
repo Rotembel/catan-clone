@@ -2,12 +2,14 @@
 // local harness: no network, no UI — just the reducer, played end to end.
 
 import { apply, createInitialState, createRng, totalVictoryPoints, type RngState } from "@catan/engine";
-import { createBaseRuleSet } from "@catan/rulesets";
+import { createRuleSet } from "@catan/rulesets";
 import type { ActionEnvelope, GameState, RuleSet } from "@catan/shared";
 import { chooseAction } from "./bot.js";
 
 export interface RunGameOptions {
   seed?: string;
+  /** Registry id; default "base". */
+  ruleSetId?: string;
   playerNames?: string[];
   /** Safety valve: a game that can't finish shouldn't hang the process. */
   maxActions?: number;
@@ -37,7 +39,7 @@ export function runGame(options: RunGameOptions = {}): GameResult {
   const playerNames = options.playerNames ?? ["Ada", "Grace", "Alan", "Edsger"];
   const maxActions = options.maxActions ?? 20000;
 
-  const { ruleSet, state: afterBoard } = createBaseRuleSet({ seed });
+  const { ruleSet, state: afterBoard } = createRuleSet(options.ruleSetId, { seed });
   let state = createInitialState(ruleSet, { playerNames, rngState: afterBoard });
 
   // The bots' own randomness, kept separate from the game's.

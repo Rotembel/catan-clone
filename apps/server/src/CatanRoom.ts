@@ -18,7 +18,7 @@
 // snapshot on the wire is exactly what the engine produced.
 
 import { Room, ServerError, type Client } from "@colyseus/core";
-import { apply, createInitialState, IllegalActionError } from "@catan/engine";
+import { apply, createInitialState, IllegalActionError, normalizeState } from "@catan/engine";
 import { createRuleSet, ruleSetInfo } from "@catan/rulesets";
 import {
   CLOSE_SUPERSEDED,
@@ -203,7 +203,7 @@ export class CatanRoom extends Room {
     this.createdAt = record.createdAt;
     this.seats = record.seats.map((s) => ({ ...s, connected: false, sessionId: undefined }));
     this.ruleSet = record.ruleSet;
-    this.game = record.game;
+    this.game = record.game ? normalizeState(record.game) : undefined;
     this.startEmptyTimer();
   }
 

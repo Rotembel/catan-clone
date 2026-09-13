@@ -17,14 +17,30 @@ Repo: https://github.com/Rotembel/catan-clone (private) · local:
 | 2 Real-time multiplayer | done | `4360969` | 8 socket tests; played live in two browser tabs |
 | 3 Stability | done | `598acf4` | server killed & restarted mid-game twice; both tabs resumed and play continued |
 | 4 House rule #1 (trade dev cards) | done | `9bd4bad` | flag-on/off tests at ruleset, engine, server; live offer of a card |
-| 5 Cities & Knights | not started | — | |
+| 5 Cities & Knights | **slice 1 of 5 done** (commodities, city improvements, city as 2nd placement, 13 VP) | see git log | 12 engine tests + 4 seeded bot games at 13 VP with card conservation |
 | 6 Custom content | not started | — | |
 
 Also done outside the phase list: client server-URL derives from the
 page's hostname (LAN play), `.env.example`, `HANDOFF.md`.
 
-**101 tests** across the workspace (engine 64, rulesets 11, client 3,
-cli 8, server 15). `pnpm typecheck` clean in all 6 packages.
+**120 tests** across the workspace (engine 76, rulesets 14, client 3,
+cli 12, server 15). `pnpm typecheck` clean in all 6 packages.
+
+### Cities & Knights plan (Phase 5, in slices — owner chose "full C&K, in slices")
+
+1. **done** — commodities (cloth/coin/paper from cities on pasture/mountain/forest), the
+   commodity bank, city improvements (3 tracks × 5 levels, paid in that track's commodity,
+   need a city), trading house (trade lvl 3 → commodities 2:1), commodities in hands/
+   discards/steals/trades, second opening placement is a city, 13 VP.
+   Data: `RuleSet.citiesAndKnights` block; `Player.commodities/improvements`;
+   `GameState.commodityBank`; action `buildImprovement`. `normalizeState` back-fills
+   these on records saved before they existed.
+2. event die + barbarians + knights as pieces (activate/promote/move, barbarian attack,
+   Fortress at politics 3, defender of Catan)
+3. progress cards (three decks, drawn by event die vs. improvement level; aqueduct at
+   science 3)
+4. metropolises (level 4/5), city walls, merchant
+5. client UI for all of the above (slice 1's UI is already in)
 
 ## Layout
 

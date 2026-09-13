@@ -5,11 +5,13 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  COMMODITIES,
   PIECE_LIMITS,
   RESOURCES,
   getGeometry,
   pieceCounts,
   totalCards,
+  totalCommodities,
   totalVictoryPoints,
 } from "@catan/engine";
 import type { GameState, RuleSet } from "@catan/shared";
@@ -24,12 +26,30 @@ function totalResourcesInPlay(state: GameState): number {
   );
 }
 
-function assertInvariants(state: GameState, ruleSet: RuleSet, expectedResources: number): void {
+/** Likewise every commodity card. */
+function totalCommoditiesInPlay(state: GameState): number {
+  return (
+    totalCommodities(state.commodityBank) +
+    state.players.reduce((sum, p) => sum + totalCommodities(p.commodities), 0)
+  );
+}
+
+function assertInvariants(
+  state: GameState,
+  ruleSet: RuleSet,
+  expectedResources: number,
+  expectedCommodities = 0
+): void {
   expect(totalResourcesInPlay(state)).toBe(expectedResources);
+  expect(totalCommoditiesInPlay(state)).toBe(expectedCommodities);
 
   for (const r of RESOURCES) {
     expect(state.bank[r]).toBeGreaterThanOrEqual(0);
     for (const p of state.players) expect(p.resources[r]).toBeGreaterThanOrEqual(0);
+  }
+  for (const c of COMMODITIES) {
+    expect(state.commodityBank[c]).toBeGreaterThanOrEqual(0);
+    for (const p of state.players) expect(p.commodities[c]).toBeGreaterThanOrEqual(0);
   }
 
   for (const p of state.players) {
@@ -99,5 +119,32 @@ describe("a full base game", () => {
     expect(ruleSet.board.ports).toHaveLength(9);
     expect(state.devDeck.length + 0).toBe(25);
     expect(state.board.robberHex).toBe(ruleSet.board.hexes.find((h) => h.resource === "desert")!.id);
+  });
+
+  it.each(SEEDS)("Cities & Knights (slice 1) finishes at 13 points with cards conserved (seed %s)", (seed) => {
+    const startingResources = 19 * RESOURCES.length;
+    const startingCommodities = 12 * COMMODITIES.length;
+    let improvementsBuilt = 0;
+    let commoditiesSeen = false;
+
+    const result = runGame({
+      seed,
+      ruleSetId: "cities-and-knights",
+      onAction: (envelope, state, ruleSet) => {
+        assertInvariants(state, ruleSet, startingResources, startingCommodities);
+        if (envelope.action.type === "buildImprovement") improvementsBuilt++;
+        if (state.players.some((p) => totalCommodities(p.commodities) > 0)) commoditiesSeen = true;
+      },
+    });
+
+    expect(result.exhausted).toBe(false);
+    expect(result.winner).toBeDefined();
+    expect(result.ruleSet.victoryPoints).toBe(13);
+    expect(totalVictoryPoints(result.state, result.ruleSet, result.winner!)).toBeGreaterThanOrEqual(13);
+    // The expansion actually happened: cities produced commodities and someone spent them.
+    expect(commoditiesSeen).toBe(true);
+    expect(improvementsBuilt).toBeGreaterThan(0);
+    // Everyone started with a city.
+    for (const p of result.state.players) expect(pieceCounts(result.state, p.id).cities).toBeGreaterThanOrEqual(1);
   });
 });

@@ -104,6 +104,7 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
 .player .swatch { grid-row: span 3; width: 14px; height: 14px; }
 
 .resources { display: flex; gap: 10px; flex-wrap: wrap; font-size: 15px; }
+.improvements .track { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; font-size: 13px; }
 .devcards { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 
 /* board targets */

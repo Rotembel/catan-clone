@@ -4,20 +4,27 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
+  COMMODITIES,
+  IMPROVEMENT_TRACKS,
   RESOURCES,
+  commodityTradeRatioFor,
   discardCountFor,
+  handSize,
   legalActions,
   legalRoadEdges,
-  totalCards,
+  nextImprovementCost,
   totalVictoryPoints,
   tradeRatiosFor,
   tryApply,
 } from "@catan/engine";
 import type {
   Action,
+  Card,
+  CardCounts,
   EdgeId,
   GameState,
   HexId,
+  ImprovementTrack,
   Resource,
   RuleSet,
   VertexId,
@@ -34,6 +41,34 @@ const RESOURCE_ICON: Record<Resource, string> = {
   wheat: "🌾",
   ore: "⛰️",
 };
+
+const CARD_ICON: Record<Card, string> = {
+  ...RESOURCE_ICON,
+  cloth: "🧵",
+  coin: "🪙",
+  paper: "📜",
+};
+
+const TRACK_LABEL: Record<ImprovementTrack, string> = {
+  trade: "Trade",
+  politics: "Politics",
+  science: "Science",
+};
+
+/** Which cards a hand can hold under this rule set. */
+function cardsIn(ruleSet: RuleSet): readonly Card[] {
+  return ruleSet.citiesAndKnights ? [...RESOURCES, ...COMMODITIES] : RESOURCES;
+}
+
+function heldOf(player: GameState["players"][number], card: Card): number {
+  return card in player.resources
+    ? player.resources[card as Resource]
+    : player.commodities[card as keyof typeof player.commodities];
+}
+
+function bankOf(game: GameState, card: Card): number {
+  return card in game.bank ? game.bank[card as Resource] : game.commodityBank[card as keyof typeof game.commodityBank];
+}
 
 type Mode =
   | { kind: "idle" }
@@ -167,7 +202,7 @@ export function Game({ net, game, ruleSet, me }: Props) {
       <header className="topbar">
         <div>
           <strong>Room {net.code}</strong>
-          {ruleSet.houseRules.tradeDevCards && (
+          {ruleSet.id !== "base" && (
             <span className="tag" title={ruleSetInfo(ruleSet.id)?.description}>
               {ruleSetInfo(ruleSet.id)?.label ?? ruleSet.id}
             </span>
@@ -193,7 +228,7 @@ export function Game({ net, game, ruleSet, me }: Props) {
           <Players game={game} ruleSet={ruleSet} me={me} net={net} />
 
           <section className="hand">
-            <h3>Your hand <span className="muted">({totalCards(player.resources)})</span></h3>
+            <h3>Your hand <span className="muted">({handSize(player)})</span></h3>
             <div className="resources">
               {RESOURCES.map((r) => (
                 <span key={r} className="res" title={r}>
@@ -201,6 +236,15 @@ export function Game({ net, game, ruleSet, me }: Props) {
                 </span>
               ))}
             </div>
+            {ruleSet.citiesAndKnights && (
+              <div className="resources" data-testid="commodities">
+                {COMMODITIES.map((c) => (
+                  <span key={c} className="res" title={c}>
+                    {CARD_ICON[c]} {player.commodities[c]}
+                  </span>
+                ))}
+              </div>
+            )}
             {player.devCards.length > 0 && (
               <div className="devcards">
                 {Object.entries(countBy(player.devCards)).map(([id, n]) => {
@@ -226,6 +270,29 @@ export function Game({ net, game, ruleSet, me }: Props) {
               </div>
             )}
           </section>
+
+          {ruleSet.citiesAndKnights && (
+            <section className="improvements" data-testid="improvements">
+              <h3>City improvements</h3>
+              {IMPROVEMENT_TRACKS.map((track) => {
+                const level = player.improvements[track];
+                const cost = nextImprovementCost(game, ruleSet, me, track);
+                const commodity = ruleSet.citiesAndKnights!.trackCommodity[track];
+                const can = legal.some((a) => a.type === "buildImprovement" && a.track === track) && mode.kind === "idle";
+                return (
+                  <div key={track} className="track">
+                    <span>
+                      {TRACK_LABEL[track]} <b>{level}</b>/{ruleSet.citiesAndKnights!.improvementCosts.length}
+                    </span>
+                    <button className="small" disabled={!can} onClick={() => sendAction({ type: "buildImprovement", track })}
+                      title={cost === undefined ? "Maxed out" : `Next level costs ${cost} ${commodity}`}>
+                      {cost === undefined ? "Max" : `Improve (${cost} ${CARD_ICON[commodity]})`}
+                    </button>
+                  </div>
+                );
+              })}
+            </section>
+          )}
 
           {!over && (
             <section className="actions">
@@ -287,7 +354,7 @@ export function Game({ net, game, ruleSet, me }: Props) {
         </aside>
       </div>
 
-      {owesDiscard && <DiscardDialog game={game} me={me} />}
+      {owesDiscard && <DiscardDialog game={game} ruleSet={ruleSet} me={me} />}
       {tradeForMe && (
         <TradeResponse game={game} ruleSet={ruleSet} offer={tradeForMe} me={me} />
       )}
@@ -402,7 +469,7 @@ function Players({ game, ruleSet, me, net }: { game: GameState; ruleSet: RuleSet
               {seat && !seat.connected && <span className="tag warn">away</span>}
             </span>
             <span className="pstats" title="victory points · cards · dev cards · knights">
-              <b>{vp}</b> VP · {totalCards(p.resources)} 🃏 · {p.devCards.length} 📜 · {p.playedKnights} ⚔️
+              <b>{vp}</b> VP · {handSize(p)} 🃏 · {p.devCards.length} 📜 · {p.playedKnights} ⚔️
             </span>
             <span className="awards">
               {game.longestRoadPlayerId === p.id && <span className="tag">longest road</span>}
@@ -417,28 +484,38 @@ function Players({ game, ruleSet, me, net }: { game: GameState; ruleSet: RuleSet
 
 // ---------------------------------------------------------------------------
 
-function useCounts(initial: Partial<Record<Resource, number>> = {}) {
-  const [counts, setCounts] = useState<Record<Resource, number>>({
-    wood: 0, brick: 0, sheep: 0, wheat: 0, ore: 0, ...initial,
-  });
-  const bump = (r: Resource, d: number, max = 99) =>
-    setCounts((c) => ({ ...c, [r]: Math.max(0, Math.min(max, c[r] + d)) }));
-  const total = RESOURCES.reduce((s, r) => s + counts[r], 0);
-  const asPartial = (): Partial<Record<Resource, number>> =>
-    Object.fromEntries(RESOURCES.filter((r) => counts[r] > 0).map((r) => [r, counts[r]]));
-  return { counts, bump, total, asPartial };
+function useCounts(cards: readonly Card[]) {
+  const [counts, setCounts] = useState<Partial<Record<Card, number>>>({});
+  const get = (c: Card) => counts[c] ?? 0;
+  const bump = (c: Card, d: number, max = 99) =>
+    setCounts((cur) => ({ ...cur, [c]: Math.max(0, Math.min(max, (cur[c] ?? 0) + d)) }));
+  const total = cards.reduce((s, c) => s + get(c), 0);
+  const asPartial = (): CardCounts =>
+    Object.fromEntries(cards.filter((c) => get(c) > 0).map((c) => [c, get(c)]));
+  return { get, bump, total, asPartial };
 }
 
-function Counter({ counts, bump, limit }: { counts: Record<Resource, number>; bump: (r: Resource, d: number) => void; limit?: Record<Resource, number> }) {
+function Counter({
+  cards,
+  get,
+  bump,
+  limit,
+}: {
+  cards: readonly Card[];
+  get: (c: Card) => number;
+  bump: (c: Card, d: number) => void;
+  /** Cards actually held; when given, each row is capped at that. */
+  limit?: (c: Card) => number;
+}) {
   return (
     <div className="counter">
-      {RESOURCES.map((r) => (
-        <div key={r} className="counter-row">
-          <span>{RESOURCE_ICON[r]} {r}{limit ? <span className="muted"> ({limit[r]})</span> : null}</span>
+      {cards.map((c) => (
+        <div key={c} className="counter-row">
+          <span>{CARD_ICON[c]} {c}{limit ? <span className="muted"> ({limit(c)})</span> : null}</span>
           <span className="stepper">
-            <button className="small" onClick={() => bump(r, -1)} disabled={counts[r] === 0}>−</button>
-            <b>{counts[r]}</b>
-            <button className="small" onClick={() => bump(r, 1)} disabled={limit ? counts[r] >= limit[r] : false}>+</button>
+            <button className="small" onClick={() => bump(c, -1)} disabled={get(c) === 0}>−</button>
+            <b>{get(c)}</b>
+            <button className="small" onClick={() => bump(c, 1)} disabled={limit ? get(c) >= limit(c) : false}>+</button>
           </span>
         </div>
       ))}
@@ -458,13 +535,14 @@ function Modal({ title, children, onClose }: { title: string; children: ReactNod
   );
 }
 
-function DiscardDialog({ game, me }: { game: GameState; me: number }) {
+function DiscardDialog({ game, ruleSet, me }: { game: GameState; ruleSet: RuleSet; me: number }) {
   const player = game.players.find((p) => p.id === me)!;
   const need = discardCountFor(game, me);
-  const { counts, bump, total, asPartial } = useCounts();
+  const cards = cardsIn(ruleSet);
+  const { get, bump, total, asPartial } = useCounts(cards);
   return (
     <Modal title={`A 7 was rolled — discard ${need} cards`}>
-      <Counter counts={counts} bump={(r, d) => bump(r, d, player.resources[r])} limit={player.resources} />
+      <Counter cards={cards} get={get} bump={(c, d) => bump(c, d, heldOf(player, c))} limit={(c) => heldOf(player, c)} />
       <div className="row end">
         <span className="muted">{total}/{need}</span>
         <button className="primary" disabled={total !== need} onClick={() => sendAction({ type: "discardCards", discard: asPartial() })}>
@@ -475,8 +553,10 @@ function DiscardDialog({ game, me }: { game: GameState; me: number }) {
   );
 }
 
-function fmt(res: Partial<Record<Resource, number>>, devCards: string[] | undefined, ruleSet: RuleSet): string {
-  const parts = RESOURCES.filter((r) => (res[r] ?? 0) > 0).map((r) => `${res[r]} ${RESOURCE_ICON[r]} ${r}`);
+function fmt(counts: CardCounts, devCards: string[] | undefined, ruleSet: RuleSet): string {
+  const parts = cardsIn(ruleSet)
+    .filter((c) => (counts[c] ?? 0) > 0)
+    .map((c) => `${counts[c]} ${CARD_ICON[c]} ${c}`);
   for (const [id, n] of Object.entries(countBy(devCards ?? []))) {
     parts.push(`${n} × ${ruleSet.devCards.find((d) => d.id === id)?.label ?? id} 📜`);
   }
@@ -498,7 +578,7 @@ function TradeResponse({ game, ruleSet, offer, me }: { game: GameState; ruleSet:
   const from = game.players.find((p) => p.id === offer.fromPlayerId)!;
   const mine = game.players.find((p) => p.id === me)!;
   const canAccept =
-    RESOURCES.every((r) => mine.resources[r] >= (offer.receive[r] ?? 0)) &&
+    cardsIn(ruleSet).every((c) => heldOf(mine, c) >= (offer.receive[c] ?? 0)) &&
     holdsCards(mine.devCards, offer.receiveDevCards ?? []);
   return (
     <Modal title={`${from.name} proposes a trade`}>
@@ -515,31 +595,34 @@ function TradeResponse({ game, ruleSet, offer, me }: { game: GameState; ruleSet:
 
 function BankTradeDialog({ game, ruleSet, me, onClose }: { game: GameState; ruleSet: RuleSet; me: number; onClose: () => void }) {
   const player = game.players.find((p) => p.id === me)!;
-  const ratios = tradeRatiosFor(game, ruleSet, me);
-  const [give, setGive] = useState<Resource | null>(null);
-  const [receive, setReceive] = useState<Resource | null>(null);
-  const ok = give && receive && give !== receive && player.resources[give] >= ratios[give] && game.bank[receive] > 0;
+  const resourceRatios = tradeRatiosFor(game, ruleSet, me);
+  const commodityRatio = commodityTradeRatioFor(game, ruleSet, me);
+  const cards = cardsIn(ruleSet);
+  const ratioOf = (c: Card) => (c in resourceRatios ? resourceRatios[c as Resource] : commodityRatio);
+  const [give, setGive] = useState<Card | null>(null);
+  const [receive, setReceive] = useState<Card | null>(null);
+  const ok = give && receive && give !== receive && heldOf(player, give) >= ratioOf(give) && bankOf(game, receive) > 0;
   return (
     <Modal title="Trade with the bank" onClose={onClose}>
       <p className="muted">Give</p>
       <div className="row wrap">
-        {RESOURCES.map((r) => (
-          <button key={r} className={give === r ? "chip on" : "chip"} disabled={player.resources[r] < ratios[r]} onClick={() => setGive(r)}>
-            {ratios[r]} {RESOURCE_ICON[r]} {r}
+        {cards.map((c) => (
+          <button key={c} className={give === c ? "chip on" : "chip"} disabled={heldOf(player, c) < ratioOf(c)} onClick={() => setGive(c)}>
+            {ratioOf(c)} {CARD_ICON[c]} {c}
           </button>
         ))}
       </div>
       <p className="muted">Receive</p>
       <div className="row wrap">
-        {RESOURCES.map((r) => (
-          <button key={r} className={receive === r ? "chip on" : "chip"} disabled={r === give || game.bank[r] === 0} onClick={() => setReceive(r)}>
-            1 {RESOURCE_ICON[r]} {r}
+        {cards.map((c) => (
+          <button key={c} className={receive === c ? "chip on" : "chip"} disabled={c === give || bankOf(game, c) === 0} onClick={() => setReceive(c)}>
+            1 {CARD_ICON[c]} {c}
           </button>
         ))}
       </div>
       <div className="row end">
         <button className="primary" disabled={!ok} onClick={() => {
-          sendAction({ type: "proposeTrade", offer: { fromPlayerId: me, give: { [give!]: ratios[give!] }, receive: { [receive!]: 1 } } });
+          sendAction({ type: "proposeTrade", offer: { fromPlayerId: me, give: { [give!]: ratioOf(give!) }, receive: { [receive!]: 1 } } });
           onClose();
         }}>
           Trade
@@ -594,8 +677,9 @@ function PlayerTradeDialog({ game, ruleSet, me, onClose }: { game: GameState; ru
   const player = game.players.find((p) => p.id === me)!;
   const others = game.players.filter((p) => p.id !== me);
   const [to, setTo] = useState<number>(others[0]!.id);
-  const give = useCounts();
-  const receive = useCounts();
+  const cards = cardsIn(ruleSet);
+  const give = useCounts(cards);
+  const receive = useCounts(cards);
   const devCardsOn = ruleSet.houseRules.tradeDevCards;
   const [giveCards, setGiveCards] = useState<Record<string, number>>({});
   const [wantCards, setWantCards] = useState<Record<string, number>>({});
@@ -616,12 +700,12 @@ function PlayerTradeDialog({ game, ruleSet, me, onClose }: { game: GameState; ru
         ))}
       </div>
       <p className="muted">You give</p>
-      <Counter counts={give.counts} bump={(r, d) => give.bump(r, d, player.resources[r])} limit={player.resources} />
+      <Counter cards={cards} get={give.get} bump={(c, d) => give.bump(c, d, heldOf(player, c))} limit={(c) => heldOf(player, c)} />
       {devCardsOn && (
         <DevCardCounter label="give-dev-cards" ruleSet={ruleSet} counts={giveCards} onChange={bump(setGiveCards)} limit={countBy(player.devCards)} />
       )}
       <p className="muted">You want</p>
-      <Counter counts={receive.counts} bump={receive.bump} />
+      <Counter cards={cards} get={receive.get} bump={receive.bump} />
       {devCardsOn && (
         <DevCardCounter label="want-dev-cards" ruleSet={ruleSet} counts={wantCards} onChange={bump(setWantCards)} />
       )}

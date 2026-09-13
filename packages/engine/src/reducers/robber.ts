@@ -4,11 +4,11 @@
 import type { GameState, HexId, RuleSet } from "@catan/shared";
 import { hexVertices } from "../board/geometry.js";
 import { getGeometry } from "../geometryCache.js";
-import { addResources, expandHand, subtractResources, totalCards } from "../resources.js";
+import { expandPlayerHand, handSize, playerMinus, playerPlus } from "../resources.js";
 import { nextInt } from "../rng.js";
 import { illegal, refresh, requireCurrentPlayer, requirePhase } from "./helpers.js";
 
-/** Players with a building on `hex` who hold at least one resource card. */
+/** Players with a building on `hex` who hold at least one card (commodities count). */
 export function stealTargetsAt(
   state: GameState,
   ruleSet: RuleSet,
@@ -24,7 +24,7 @@ export function stealTargetsAt(
     const building = state.board.buildings[vertex];
     if (!building || building.playerId === thiefId) continue;
     const victim = state.players.find((p) => p.id === building.playerId);
-    if (victim && totalCards(victim.resources) > 0) victims.add(building.playerId);
+    if (victim && handSize(victim) > 0) victims.add(building.playerId);
   }
   return [...victims].sort((a, b) => a - b);
 }
@@ -55,7 +55,7 @@ export function applyRobberMove(
   if (!victims.includes(stealFrom)) illegal(`cannot steal from player ${stealFrom} on that hex`);
 
   const victim = next.players.find((p) => p.id === stealFrom)!;
-  const hand = expandHand(victim.resources);
+  const hand = expandPlayerHand(victim);
   const { value: index, state: rngState } = nextInt(next.rngState, hand.length);
   const stolen = hand[index]!;
 
@@ -63,8 +63,8 @@ export function applyRobberMove(
     ...next,
     rngState,
     players: next.players.map((p) => {
-      if (p.id === stealFrom) return { ...p, resources: subtractResources(p.resources, { [stolen]: 1 }) };
-      if (p.id === thiefId) return { ...p, resources: addResources(p.resources, { [stolen]: 1 }) };
+      if (p.id === stealFrom) return playerMinus(p, { [stolen]: 1 });
+      if (p.id === thiefId) return playerPlus(p, { [stolen]: 1 });
       return p;
     }),
   };

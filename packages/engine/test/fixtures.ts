@@ -7,9 +7,12 @@
 
 import type {
   BoardLayout,
+  CitiesAndKnightsRules,
+  Commodity,
   EdgeId,
   GameState,
   HexTile,
+  ImprovementTrack,
   PortLayout,
   Resource,
   RuleSet,
@@ -19,7 +22,7 @@ import { axialToCube, buildBoardGeometry, hexagonAxials, hexKey } from "../src/b
 import { hexEdges, hexVertices } from "../src/board/geometry.js";
 import { apply } from "../src/apply.js";
 import { createRng } from "../src/rng.js";
-import { addResources } from "../src/resources.js";
+import { addCommodities, addResources } from "../src/resources.js";
 import { legalActions } from "../src/selectors/legalActions.js";
 import { createInitialState } from "../src/state.js";
 
@@ -41,10 +44,22 @@ const DEV_CARDS: RuleSet["devCards"] = [
 /** Resources cycle in a fixed order; hex index 0 is the desert. */
 const RESOURCE_CYCLE: Resource[] = ["wood", "brick", "sheep", "wheat", "ore"];
 
+/** The standard expansion block, spelled out here so engine tests don't depend on @catan/rulesets. */
+export const TEST_CK_RULES: CitiesAndKnightsRules = {
+  commodityFor: { sheep: "cloth", ore: "coin", wood: "paper" },
+  trackCommodity: { trade: "cloth", politics: "coin", science: "paper" },
+  improvementCosts: [1, 2, 3, 4, 5],
+  commodityPortLevel: 3,
+  setupSecondPlacementIsCity: true,
+  commodityBankPerType: 12,
+};
+
 export interface TestRuleSetOptions {
   radius?: number;
   victoryPoints?: number;
   tradeDevCards?: boolean;
+  /** Attach the Cities & Knights block (slice 1). */
+  citiesAndKnights?: boolean;
   /** Every non-desert hex gets this number token, so one roll pays everyone. */
   uniformNumberToken?: number;
 }
@@ -101,6 +116,7 @@ export function testRuleSet(options: TestRuleSetOptions = {}): RuleSet {
     devCards: DEV_CARDS,
     board: testBoardLayout(options),
     houseRules: { tradeDevCards: options.tradeDevCards ?? false },
+    ...(options.citiesAndKnights ? { citiesAndKnights: { ...TEST_CK_RULES } } : {}),
   };
 }
 
@@ -159,6 +175,33 @@ export function giveResources(
     ...state,
     players: state.players.map((p) =>
       p.id === playerId ? { ...p, resources: addResources(p.resources, amount) } : p
+    ),
+  };
+}
+
+export function giveCommodities(
+  state: GameState,
+  playerId: number,
+  amount: Partial<Record<Commodity, number>>
+): GameState {
+  return {
+    ...state,
+    players: state.players.map((p) =>
+      p.id === playerId ? { ...p, commodities: addCommodities(p.commodities, amount) } : p
+    ),
+  };
+}
+
+export function withImprovement(
+  state: GameState,
+  playerId: number,
+  track: ImprovementTrack,
+  level: number
+): GameState {
+  return {
+    ...state,
+    players: state.players.map((p) =>
+      p.id === playerId ? { ...p, improvements: { ...p.improvements, [track]: level } } : p
     ),
   };
 }

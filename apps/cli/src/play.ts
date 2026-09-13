@@ -3,6 +3,7 @@
 //   pnpm --filter @catan/cli play              # default seed
 //   pnpm --filter @catan/cli play -- --seed=x  # pick a seed
 //   pnpm --filter @catan/cli play -- --verbose # print every action
+//   pnpm --filter @catan/cli play -- --rules=cities-and-knights
 
 import { totalVictoryPoints } from "@catan/engine";
 import type { ActionEnvelope, GameState } from "@catan/shared";
@@ -14,6 +15,7 @@ function arg(name: string, fallback: string): string {
 }
 
 const seed = arg("seed", "game-1");
+const ruleSetId = arg("rules", "base");
 const verbose = process.argv.includes("--verbose");
 
 function describe(envelope: ActionEnvelope, state: GameState): string {
@@ -40,6 +42,8 @@ function describe(envelope: ActionEnvelope, state: GameState): string {
       return `${name} trades with the bank`;
     case "respondTrade":
       return `${name} ${action.accept ? "accepts" : "declines"} a trade`;
+    case "buildImprovement":
+      return `${name} improves ${action.track}`;
     case "endTurn":
       return `${name} ends their turn`;
   }
@@ -50,6 +54,7 @@ console.log(`\nCatan — base game, seed "${seed}"\n`);
 let turns = 0;
 const result = runGame({
   seed,
+  ruleSetId,
   onAction: (envelope, state) => {
     if (envelope.action.type === "endTurn") turns++;
     if (verbose) console.log(`  ${describe(envelope, state)}`);

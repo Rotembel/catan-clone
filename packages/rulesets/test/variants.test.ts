@@ -38,7 +38,7 @@ describe("friends-night variant (house rule #1)", () => {
 describe("rule set registry", () => {
   it("lists base first as the default and resolves ids", () => {
     expect(RULE_SETS[0]?.id).toBe(DEFAULT_RULE_SET_ID);
-    expect(RULE_SETS.map((r) => r.id)).toEqual(["base", FRIENDS_NIGHT_ID]);
+    expect(RULE_SETS.map((r) => r.id)).toEqual(["base", FRIENDS_NIGHT_ID, "cities-and-knights"]);
     expect(ruleSetInfo(FRIENDS_NIGHT_ID)?.label).toBeTruthy();
     expect(ruleSetInfo("nope")).toBeUndefined();
   });

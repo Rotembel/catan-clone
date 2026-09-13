@@ -1,12 +1,21 @@
 // Rolling, production payout, and the 7-card discard.
 
-import type { GameState, Resource, RuleSet } from "@catan/shared";
-import { addResources, subtractResources, totalCards } from "../resources.js";
+import type { CardCounts, GameState, RuleSet } from "@catan/shared";
+import {
+  CARDS,
+  addCommodities,
+  addResources,
+  handSize,
+  playerMinus,
+  playerPlus,
+  splitCards,
+  totalAllCards,
+} from "../resources.js";
 import { rollTwoDice } from "../rng.js";
 import { productionForRoll } from "../selectors/production.js";
 import { illegal, refresh, requireCurrentPlayer, requirePhase } from "./helpers.js";
 
-/** Hand size above which a 7 forces a discard. */
+/** Hand size (resources + commodities) above which a 7 forces a discard. */
 export const DISCARD_THRESHOLD = 7;
 
 export function rollDice(state: GameState, ruleSet: RuleSet, playerId: number): GameState {
@@ -19,7 +28,7 @@ export function rollDice(state: GameState, ruleSet: RuleSet, playerId: number): 
   let next: GameState = { ...state, dice, rngState };
 
   if (roll === 7) {
-    const owing = next.players.filter((p) => totalCards(p.resources) > DISCARD_THRESHOLD).map((p) => p.id);
+    const owing = next.players.filter((p) => handSize(p) > DISCARD_THRESHOLD).map((p) => p.id);
     if (owing.length > 0) {
       next = { ...next, pendingDiscards: owing, turn: { ...next.turn, phase: "discard" } };
     } else {
@@ -28,13 +37,20 @@ export function rollDice(state: GameState, ruleSet: RuleSet, playerId: number): 
     return refresh(next, ruleSet);
   }
 
-  const { gains, bank } = productionForRoll(next, ruleSet, roll);
+  const { gains, commodityGains, bank, commodityBank } = productionForRoll(next, ruleSet, roll);
   next = {
     ...next,
     bank,
+    commodityBank,
     players: next.players.map((p) => {
       const gain = gains.get(p.id);
-      return gain ? { ...p, resources: addResources(p.resources, gain) } : p;
+      const cgain = commodityGains.get(p.id);
+      if (!gain && !cgain) return p;
+      return {
+        ...p,
+        resources: gain ? addResources(p.resources, gain) : p.resources,
+        commodities: cgain ? addCommodities(p.commodities, cgain) : p.commodities,
+      };
     }),
     turn: { ...next.turn, phase: "mainTurn" },
   };
@@ -46,7 +62,7 @@ export function rollDice(state: GameState, ruleSet: RuleSet, playerId: number): 
 export function discardCountFor(state: GameState, playerId: number): number {
   const player = state.players.find((p) => p.id === playerId);
   if (!player) return 0;
-  const hand = totalCards(player.resources);
+  const hand = handSize(player);
   return hand > DISCARD_THRESHOLD ? Math.floor(hand / 2) : 0;
 }
 
@@ -54,7 +70,7 @@ export function discardCards(
   state: GameState,
   ruleSet: RuleSet,
   playerId: number,
-  discard: Partial<Record<Resource, number>>
+  discard: CardCounts
 ): GameState {
   requirePhase(state, "discard");
   const pending = state.pendingDiscards ?? [];
@@ -62,23 +78,23 @@ export function discardCards(
 
   const player = state.players.find((p) => p.id === playerId)!;
   const required = discardCountFor(state, playerId);
-  if (totalCards(discard) !== required) {
+  if (totalAllCards(discard) !== required) {
     illegal(`player ${playerId} must discard exactly ${required} cards`);
   }
-  for (const [resource, amount] of Object.entries(discard) as [Resource, number][]) {
+  for (const card of CARDS) {
+    const amount = discard[card] ?? 0;
     if (amount < 0) illegal("cannot discard a negative amount");
-    if (player.resources[resource] < amount) {
-      illegal(`player ${playerId} does not hold ${amount} ${resource}`);
-    }
+    const held = card in player.resources ? player.resources[card as keyof typeof player.resources] : player.commodities[card as keyof typeof player.commodities];
+    if (held < amount) illegal(`player ${playerId} does not hold ${amount} ${card}`);
   }
 
+  const { resources, commodities } = splitCards(discard);
   const remaining = pending.filter((id) => id !== playerId);
   let next: GameState = {
     ...state,
-    bank: addResources(state.bank, discard),
-    players: state.players.map((p) =>
-      p.id === playerId ? { ...p, resources: subtractResources(p.resources, discard) } : p
-    ),
+    bank: addResources(state.bank, resources),
+    commodityBank: addCommodities(state.commodityBank, commodities),
+    players: state.players.map((p) => (p.id === playerId ? playerMinus(p, discard) : p)),
   };
 
   next =
@@ -88,3 +104,6 @@ export function discardCards(
 
   return refresh(next, ruleSet);
 }
+
+// Re-exported for callers that only ever dealt in resources.
+export { playerPlus };

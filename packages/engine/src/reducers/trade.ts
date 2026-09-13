@@ -1,16 +1,32 @@
 // Bank/port trades and player-to-player trades.
 //
 // Dev cards in a trade are gated on ruleSet.houseRules.tradeDevCards —
-// HOUSE RULE #1. The base RuleSet leaves it off, so the same code path
-// serves both without a fork.
+// HOUSE RULE #1. Commodities in a trade are gated on ruleSet.citiesAndKnights.
+// The base RuleSet has neither, so the same code path serves all without a fork.
 
-import type { GameState, Resource, RuleSet, TradeOffer } from "@catan/shared";
-import { addResources, canAfford, subtractResources, totalCards } from "../resources.js";
-import { tradeRatiosFor } from "../selectors/production.js";
+import type { Card, GameState, RuleSet, TradeOffer } from "@catan/shared";
+import {
+  CARDS,
+  addCommodities,
+  addResources,
+  isCommodity,
+  playerHolds,
+  playerMinus,
+  playerPlus,
+  splitCards,
+  subtractCommodities,
+  subtractResources,
+  totalAllCards,
+} from "../resources.js";
+import { commodityTradeRatioFor, tradeRatiosFor } from "../selectors/production.js";
 import { illegal, refresh, requireCurrentPlayer, requirePhase, requirePlayer } from "./helpers.js";
 
 function offerHasDevCards(offer: TradeOffer): boolean {
   return (offer.giveDevCards?.length ?? 0) > 0 || (offer.receiveDevCards?.length ?? 0) > 0;
+}
+
+function offerHasCommodities(offer: TradeOffer): boolean {
+  return CARDS.some((c) => isCommodity(c) && ((offer.give[c] ?? 0) > 0 || (offer.receive[c] ?? 0) > 0));
 }
 
 function holdsDevCards(cards: string[], required: string[]): boolean {
@@ -32,40 +48,48 @@ function removeDevCards(cards: string[], remove: string[]): string[] {
   return pool;
 }
 
+/** Cards in the bank, mixed. */
+function bankHolds(state: GameState, counts: TradeOffer["receive"]): Card | undefined {
+  const { resources, commodities } = splitCards(counts);
+  for (const [r, n] of Object.entries(resources)) if (state.bank[r as keyof typeof state.bank] < (n ?? 0)) return r as Card;
+  for (const [c, n] of Object.entries(commodities)) if (state.commodityBank[c as keyof typeof state.commodityBank] < (n ?? 0)) return c as Card;
+  return undefined;
+}
+
 /**
- * A bank or port trade: give N of one resource, take back N/ratio of
+ * A bank or port trade: give N of one card type, take back N/ratio of
  * whatever you like, where ratio is the best one this player has access to.
  */
 function bankTrade(state: GameState, ruleSet: RuleSet, playerId: number, offer: TradeOffer): GameState {
   if (offerHasDevCards(offer)) illegal("the bank does not trade development cards");
 
-  const giveEntries = (Object.entries(offer.give) as [Resource, number][]).filter(([, n]) => n > 0);
-  if (giveEntries.length !== 1) illegal("a bank trade gives exactly one resource type");
-  const [giveResource, giveAmount] = giveEntries[0]!;
+  const giveEntries = (Object.entries(offer.give) as [Card, number][]).filter(([, n]) => n > 0);
+  if (giveEntries.length !== 1) illegal("a bank trade gives exactly one card type");
+  const [giveCard, giveAmount] = giveEntries[0]!;
 
-  const ratio = tradeRatiosFor(state, ruleSet, playerId)[giveResource];
+  const ratio = isCommodity(giveCard)
+    ? commodityTradeRatioFor(state, ruleSet, playerId)
+    : tradeRatiosFor(state, ruleSet, playerId)[giveCard];
   if (giveAmount % ratio !== 0) {
-    illegal(`a bank trade for ${giveResource} must be in multiples of ${ratio}`);
+    illegal(`a bank trade for ${giveCard} must be in multiples of ${ratio}`);
   }
-  const receiveCount = totalCards(offer.receive);
+  const receiveCount = totalAllCards(offer.receive);
   if (receiveCount !== giveAmount / ratio) {
-    illegal(`giving ${giveAmount} ${giveResource} at ${ratio}:1 buys ${giveAmount / ratio}, not ${receiveCount}`);
+    illegal(`giving ${giveAmount} ${giveCard} at ${ratio}:1 buys ${giveAmount / ratio}, not ${receiveCount}`);
   }
 
   const player = requirePlayer(state, playerId);
-  if (!canAfford(player.resources, offer.give)) illegal("you don't hold what you're offering");
-  for (const [resource, amount] of Object.entries(offer.receive) as [Resource, number][]) {
-    if (state.bank[resource] < amount) illegal(`the bank has no ${resource} left`);
-  }
+  if (!playerHolds(player, offer.give)) illegal("you don't hold what you're offering");
+  const short = bankHolds(state, offer.receive);
+  if (short) illegal(`the bank has no ${short} left`);
 
+  const gave = splitCards(offer.give);
+  const got = splitCards(offer.receive);
   const next: GameState = {
     ...state,
-    bank: subtractResources(addResources(state.bank, offer.give), offer.receive),
-    players: state.players.map((p) =>
-      p.id === playerId
-        ? { ...p, resources: addResources(subtractResources(p.resources, offer.give), offer.receive) }
-        : p
-    ),
+    bank: subtractResources(addResources(state.bank, gave.resources), got.resources),
+    commodityBank: subtractCommodities(addCommodities(state.commodityBank, gave.commodities), got.commodities),
+    players: state.players.map((p) => (p.id === playerId ? playerPlus(playerMinus(p, offer.give), offer.receive) : p)),
   };
   return refresh(next, ruleSet, playerId);
 }
@@ -83,13 +107,19 @@ export function proposeTrade(
   if (offerHasDevCards(offer) && !ruleSet.houseRules.tradeDevCards) {
     illegal("trading development cards is off in this rule set");
   }
+  if (offerHasCommodities(offer) && !ruleSet.citiesAndKnights) {
+    illegal("there are no commodities in this rule set");
+  }
+  for (const card of CARDS) {
+    if ((offer.give[card] ?? 0) < 0 || (offer.receive[card] ?? 0) < 0) illegal("a trade cannot carry negative amounts");
+  }
 
   if (offer.toPlayerId === undefined) return bankTrade(state, ruleSet, playerId, offer);
 
   if (offer.toPlayerId === playerId) illegal("you cannot trade with yourself");
   requirePlayer(state, offer.toPlayerId);
   if (state.pendingTrade) illegal("there is already a trade on the table");
-  if (totalCards(offer.give) === 0 && (offer.giveDevCards?.length ?? 0) === 0) {
+  if (totalAllCards(offer.give) === 0 && (offer.giveDevCards?.length ?? 0) === 0) {
     illegal("a trade must offer something");
   }
 
@@ -111,8 +141,8 @@ export function respondTrade(
   const proposer = requirePlayer(state, offer.fromPlayerId);
   const responder = requirePlayer(state, playerId);
 
-  if (!canAfford(proposer.resources, offer.give)) illegal("the proposer no longer holds their side");
-  if (!canAfford(responder.resources, offer.receive)) illegal("you don't hold your side of the trade");
+  if (!playerHolds(proposer, offer.give)) illegal("the proposer no longer holds their side");
+  if (!playerHolds(responder, offer.receive)) illegal("you don't hold your side of the trade");
 
   const giveDevCards = offer.giveDevCards ?? [];
   const receiveDevCards = offer.receiveDevCards ?? [];
@@ -125,15 +155,13 @@ export function respondTrade(
     players: state.players.map((p) => {
       if (p.id === offer.fromPlayerId) {
         return {
-          ...p,
-          resources: addResources(subtractResources(p.resources, offer.give), offer.receive),
+          ...playerPlus(playerMinus(p, offer.give), offer.receive),
           devCards: [...removeDevCards(p.devCards, giveDevCards), ...receiveDevCards],
         };
       }
       if (p.id === playerId) {
         return {
-          ...p,
-          resources: addResources(subtractResources(p.resources, offer.receive), offer.give),
+          ...playerPlus(playerMinus(p, offer.receive), offer.give),
           devCards: [...removeDevCards(p.devCards, receiveDevCards), ...giveDevCards],
         };
       }

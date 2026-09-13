@@ -176,6 +176,10 @@ export function chooseAction(
 
   // --- main turn, in priority order ---
 
+  // Cities & Knights: improvements are the only use for commodities.
+  const improvements = ofType(options, "buildImprovement");
+  if (improvements.length > 0) return { action: improvements[0], rng };
+
   const cities = ofType(options, "buildCity");
   if (cities.length > 0) {
     return { action: bestBy(cities, (a) => vertexValue(state, ruleSet, a.vertex)), rng };

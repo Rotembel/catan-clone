@@ -8,6 +8,7 @@ import type { ActionEnvelope, GameState, RuleSet } from "@catan/shared";
 import { buildCity, buildRoad, buildSettlement } from "./reducers/build.js";
 import { buyDevCard, playDevCard } from "./reducers/devCards.js";
 import { discardCards, rollDice } from "./reducers/dice.js";
+import { buildImprovement } from "./reducers/improve.js";
 import { IllegalActionError, illegal, requireInPlay, requirePlayer } from "./reducers/helpers.js";
 import { moveRobber } from "./reducers/robber.js";
 import { placeSetupRoad, placeSetupSettlement } from "./reducers/setup.js";
@@ -59,6 +60,9 @@ export function apply(state: GameState, action: ActionEnvelope, ruleSet: RuleSet
 
     case "discardCards":
       return discardCards(state, ruleSet, playerId, action.action.discard);
+
+    case "buildImprovement":
+      return buildImprovement(state, ruleSet, playerId, action.action.track);
 
     case "endTurn":
       return endTurn(state, ruleSet, playerId);

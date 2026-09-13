@@ -7,30 +7,31 @@
 // choice, and player-to-player trade proposals (unbounded) are not
 // enumerated at all.
 
-import type { Action, GameState, Resource, RuleSet } from "@catan/shared";
+import type { Action, Card, CardCounts, GameState, RuleSet } from "@catan/shared";
 import { discardCountFor } from "../reducers/dice.js";
 import { PIECE_LIMITS, pieceCounts } from "../reducers/helpers.js";
+import { canBuildImprovement } from "../reducers/improve.js";
 import { stealTargetsAt } from "../reducers/robber.js";
-import { RESOURCES, canAfford } from "../resources.js";
+import { CARDS, COMMODITIES, IMPROVEMENT_TRACKS, RESOURCES, canAfford, isCommodity } from "../resources.js";
 import {
   legalCityVertices,
   legalRoadEdges,
   legalSettlementVertices,
   legalSetupRoadEdges,
 } from "./building.js";
-import { tradeRatiosFor } from "./production.js";
+import { commodityTradeRatioFor, tradeRatiosFor } from "./production.js";
 
 /** A deterministic, legal discard: shed from the biggest stacks first. */
-export function canonicalDiscard(
-  state: GameState,
-  playerId: number
-): Partial<Record<Resource, number>> {
+export function canonicalDiscard(state: GameState, playerId: number): CardCounts {
   const player = state.players.find((p) => p.id === playerId);
-  const discard: Partial<Record<Resource, number>> = {};
+  const discard: CardCounts = {};
   if (!player) return discard;
 
   let remaining = discardCountFor(state, playerId);
-  const pool = RESOURCES.map((r) => ({ resource: r, count: player.resources[r] }))
+  const pool: { resource: Card; count: number }[] = [
+    ...RESOURCES.map((r) => ({ resource: r as Card, count: player.resources[r] })),
+    ...COMMODITIES.map((c) => ({ resource: c as Card, count: player.commodities[c] })),
+  ]
     .filter((entry) => entry.count > 0)
     .sort((a, b) => b.count - a.count || a.resource.localeCompare(b.resource));
 
@@ -167,6 +168,12 @@ export function legalActions(state: GameState, ruleSet: RuleSet, playerId: numbe
         actions.push({ type: "buyDevCard" });
       }
 
+      for (const track of IMPROVEMENT_TRACKS) {
+        if (canBuildImprovement(state, ruleSet, playerId, track)) {
+          actions.push({ type: "buildImprovement", track });
+        }
+      }
+
       actions.push(...knightActions(state, ruleSet, playerId));
 
       if (!player.hasPlayedDevCardThisTurn) {
@@ -213,13 +220,17 @@ export function legalActions(state: GameState, ruleSet: RuleSet, playerId: numbe
         }
       }
 
-      // Bank/port trades: one ratio's worth of any resource for any other.
+      // Bank/port trades: one ratio's worth of any card for any other.
       const ratios = tradeRatiosFor(state, ruleSet, playerId);
-      for (const give of RESOURCES) {
-        const ratio = ratios[give];
-        if (player.resources[give] < ratio) continue;
-        for (const receive of RESOURCES) {
-          if (receive === give || state.bank[receive] < 1) continue;
+      const commodityRatio = commodityTradeRatioFor(state, ruleSet, playerId);
+      const tradable: Card[] = ruleSet.citiesAndKnights ? [...CARDS] : [...RESOURCES];
+      const held = (c: Card) => (isCommodity(c) ? player.commodities[c] : player.resources[c]);
+      const inBank = (c: Card) => (isCommodity(c) ? state.commodityBank[c] : state.bank[c]);
+      for (const give of tradable) {
+        const ratio = isCommodity(give) ? commodityRatio : ratios[give];
+        if (held(give) < ratio) continue;
+        for (const receive of tradable) {
+          if (receive === give || inBank(receive) < 1) continue;
           actions.push({
             type: "proposeTrade",
             offer: {

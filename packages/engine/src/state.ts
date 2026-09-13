@@ -1,5 +1,5 @@
 import type { GameState, Player, Resource, RuleSet } from "@catan/shared";
-import { emptyResources } from "./resources.js";
+import { emptyCommodities, emptyImprovements, emptyResources } from "./resources.js";
 import { shuffle, type RngState } from "./rng.js";
 
 export interface CreateGameOptions {
@@ -29,6 +29,24 @@ export function createPlayer(id: number, name: string): Player {
     hasPlayedDevCardThisTurn: false,
     playedKnights: 0,
     victoryPoints: 0,
+    commodities: emptyCommodities(),
+    improvements: emptyImprovements(),
+  };
+}
+
+/**
+ * Fill in fields a persisted state from an older build may lack, so a
+ * record saved before an expansion existed still loads. Idempotent.
+ */
+export function normalizeState(state: GameState): GameState {
+  return {
+    ...state,
+    commodityBank: { ...emptyCommodities(), ...(state.commodityBank ?? {}) },
+    players: state.players.map((p) => ({
+      ...p,
+      commodities: { ...emptyCommodities(), ...(p.commodities ?? {}) },
+      improvements: { ...emptyImprovements(), ...(p.improvements ?? {}) },
+    })),
   };
 }
 
@@ -47,6 +65,10 @@ export function createInitialState(ruleSet: RuleSet, options: CreateGameOptions)
   const bank = emptyResources();
   for (const r of Object.keys(bank) as Resource[]) bank[r] = bankPerResource;
 
+  const commodityBank = emptyCommodities();
+  const perCommodity = ruleSet.citiesAndKnights?.commodityBankPerType ?? 0;
+  for (const c of Object.keys(commodityBank) as (keyof typeof commodityBank)[]) commodityBank[c] = perCommodity;
+
   return {
     ruleSetId: ruleSet.id,
     players: options.playerNames.map((name, i) => createPlayer(i, name)),
@@ -58,6 +80,7 @@ export function createInitialState(ruleSet: RuleSet, options: CreateGameOptions)
     },
     devDeck,
     bank,
+    commodityBank,
     rngState: rngAfterDeck,
   };
 }
