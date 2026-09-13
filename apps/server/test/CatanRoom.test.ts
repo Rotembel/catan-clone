@@ -7,13 +7,14 @@ import { boot, type ColyseusTestServer } from "@colyseus/testing";
 import type { Room as ClientRoom } from "colyseus.js";
 import { createInitialState, legalActions, pieceCounts, startInteraction } from "@catan/engine";
 import { createRuleSet } from "@catan/rulesets";
-import { nextActor } from "@catan/bot";
+import { chooseAction, nextActor } from "@catan/bot";
 import {
   CLOSE_SUPERSEDED,
   EVT,
   MSG,
   ROOM_NAME,
   type Action,
+  type ActionEnvelope,
   type ErrorPayload,
   type GameState,
   type RoomSnapshot,
@@ -22,6 +23,7 @@ import {
 } from "@catan/shared";
 import { CatanRoom } from "../src/CatanRoom.js";
 import { MemoryStore, type GameStore } from "../src/store.js";
+import type { BotPacing } from "../src/botPacing.js";
 
 let server: ColyseusTestServer;
 // One store for the whole file (the room handler captures it at define
@@ -30,12 +32,12 @@ const store: GameStore & { clear(): void } = new MemoryStore();
 
 const TEST_BUILD = { appVersion: "0.6.0-test", gitCommit: "abc1234", buildProfile: "dev" as const, mapGenerationVersion: "mapgen-v1" };
 
-async function bootServer(withStore: GameStore): Promise<ColyseusTestServer> {
+async function bootServer(withStore: GameStore, botPacing?: BotPacing): Promise<ColyseusTestServer> {
   return boot({
     options: {},
     initializeGameServer: (gameServer) => {
       gameServer
-        .define(ROOM_NAME, CatanRoom, { store: withStore, build: TEST_BUILD, persistence: "memory", botDelayMs: 0 })
+        .define(ROOM_NAME, CatanRoom, { store: withStore, build: TEST_BUILD, persistence: "memory", botDelayMs: 0, ...(botPacing ? { botPacing } : {}) })
         .filterBy(["code"]);
     },
   });
@@ -60,6 +62,7 @@ interface Peer {
   seat: SeatPayload;
   snapshots: RoomSnapshot[];
   games: GameState[];
+  actions: ActionEnvelope[];
   errors: ErrorPayload[];
   ruleSet?: RuleSet;
 }
@@ -83,9 +86,10 @@ async function connect(
   seatToken?: string,
   create = false
 ): Promise<Peer> {
-  const peer: Partial<Peer> & { snapshots: RoomSnapshot[]; games: GameState[]; errors: ErrorPayload[] } = {
+  const peer: Partial<Peer> & { snapshots: RoomSnapshot[]; games: GameState[]; actions: ActionEnvelope[]; errors: ErrorPayload[] } = {
     snapshots: [],
     games: [],
+    actions: [],
     errors: [],
   };
 
@@ -109,6 +113,7 @@ async function connect(
   room.onMessage(EVT.seat, (seat: SeatPayload) => (peer.seat = seat));
   room.onMessage(EVT.room, (snap: RoomSnapshot) => peer.snapshots.push(snap));
   room.onMessage(EVT.game, (game: GameState) => peer.games.push(game));
+  room.onMessage(EVT.action, (envelope: ActionEnvelope) => peer.actions.push(envelope));
   room.onMessage(EVT.ruleset, (rs: RuleSet) => (peer.ruleSet = rs));
   room.onMessage(EVT.error, (err: ErrorPayload) => peer.errors.push(err));
 
@@ -542,6 +547,144 @@ describe("CatanRoom", () => {
       // rejected by the engine (no broadcast) or show up as a repeated state.
       for (let i = 1; i < back.games.length; i++) {
         expect(back.games[i]).not.toEqual(back.games[i - 1]);
+      }
+    });
+  });
+
+  describe("trading with bots (the real-iPad stuck-trade audit)", () => {
+    const settle = (ms = 60) => new Promise((r) => setTimeout(r, ms));
+    /** 1 human + 2 bots, C&K, driven to the human's first main turn with tradeable cards. */
+    async function humanMainTurn(code: string): Promise<Peer> {
+      const host = await connect(code, "Ada", undefined, true);
+      host.room.send(MSG.addBot);
+      host.room.send(MSG.addBot);
+      await waitFor(() => (host.snapshots.at(-1)?.seats.length === 3 ? true : undefined));
+      host.room.send(MSG.start, { ruleSetId: "cities-and-knights" });
+      await waitFor(() => (host.games[0] && host.ruleSet ? true : undefined));
+      const latest = () => host.games.at(-1)!;
+      let guard = 0;
+      // Setup, then roll: keep feeding Ada's moves (bots move on their own) until Ada's main turn.
+      while (!(latest().turn.phase === "mainTurn" && latest().turn.current === 0)) {
+        if (guard++ > 400) throw new Error("never reached Ada's main turn");
+        const state = latest();
+        const actor = nextActor(state)!;
+        const before = host.games.length;
+        if (actor === 0) {
+          const acts = legalActions(state, host.ruleSet!, 0);
+          host.room.send(MSG.action, acts.find((a) => a.type === "rollDice") ?? acts.find((a) => a.type === "discardCards") ?? acts[0]!);
+        }
+        await waitFor(() => (host.games.length > before ? true : undefined));
+      }
+      return host;
+    }
+
+    it("a human offer to a bot is declined by the bot itself (deterministically) and play continues; the applied action is broadcast", async () => {
+      const host = await humanMainTurn("TBOT");
+      const state = host.games.at(-1)!;
+      const me = state.players[0]!;
+      const give = (Object.keys(me.resources) as (keyof typeof me.resources)[]).find((r) => me.resources[r] > 0);
+      const before = host.games.length;
+      const offer = { fromPlayerId: 0, toPlayerId: 1, give: give ? { [give]: 1 } : {}, receive: { ore: 1 } };
+      // Even an offer of "nothing" for something (if Ada is broke) is rejected by the engine, never left pending.
+      host.room.send(MSG.action, { type: "proposeTrade", offer });
+      if (!give) {
+        const err = await waitFor(() => host.errors.at(-1));
+        expect(err.message).toMatch(/offer something/);
+        return;
+      }
+      // Pending → the bot answers on its own → cleared, without any human input.
+      await waitFor(() => (host.games.length >= before + 2 ? true : undefined));
+      const seen = host.games.slice(before);
+      expect(seen[0]!.pendingTrade).toEqual(offer);
+      expect(seen[1]!.pendingTrade).toBeUndefined();
+      expect(nextActor(seen[1]!)).toBe(0);
+      expect(seen[1]!.players[0]!.resources).toEqual(seen[0]!.players[0]!.resources); // declined, nothing moved
+      const bot = chooseAction(seen[0]!, host.ruleSet!, 1, "any-rng");
+      expect(bot.action).toEqual({ type: "respondTrade", accept: false });
+      expect(host.actions.at(-1)).toEqual({ playerId: 1, action: { type: "respondTrade", accept: false } });
+      // The human is not stuck: end turn is legal and accepted.
+      const after = host.games.length;
+      host.room.send(MSG.action, { type: "endTurn" });
+      await waitFor(() => (host.games.length > after ? true : undefined));
+      expect(host.games.at(-1)!.turn.current).not.toBe(0);
+    });
+
+    it("a server restart with a human→bot offer on the table: the bot answers once on rejoin, nothing is duplicated", async () => {
+      // Build the pending trade directly in the store (a mid-offer snapshot), then boot into it.
+      const host = await humanMainTurn("TRST");
+      const state = host.games.at(-1)!;
+      const me = state.players[0]!;
+      const give = (Object.keys(me.resources) as (keyof typeof me.resources)[]).find((r) => me.resources[r] > 0);
+      if (!give) return; // this seed left Ada broke; the previous test covers the engine's rejection
+      const token = host.seat.seatToken;
+      const offer = { fromPlayerId: 0, toPlayerId: 1, give: { [give]: 1 }, receive: { ore: 1 } };
+
+      await server.shutdown(); // (the room persists on the way down — inject the offer after that)
+      const record = (await store.load("TRST"))!;
+      await store.save({ ...record, game: { ...record.game!, pendingTrade: offer } });
+      server = await bootServer(store);
+      const back = await connect("TRST", "Ada", token);
+      await waitFor(() => (back.games.length >= 2 ? true : undefined));
+      expect(back.games[0]!.pendingTrade).toEqual(offer);
+      expect(back.games[1]!.pendingTrade).toBeUndefined();
+      expect(back.actions.filter((a) => a.action.type === "respondTrade")).toHaveLength(1);
+      await settle(150);
+      expect(back.games.length).toBe(2); // exactly one bot move: the decline
+      expect(nextActor(back.games.at(-1)!)).toBe(0);
+    });
+  });
+
+  describe("bot pacing over the wire", () => {
+    it("a bot's turn is spread out: pause → roll → dice linger → actions → end turn, all from one timer", async () => {
+      // Reboot with real (scaled-down) pacing; the file-level server runs bots instantly.
+      const pacing = { beforeRollMs: 300, afterRollMs: 450, betweenActionsMs: 150, beforeEndTurnMs: 200, responseMs: 100 };
+      await server.shutdown();
+      server = await bootServer(store, pacing);
+      try {
+        const peer = await connect("PACE", "Ada", undefined, true);
+        const host = peer.room;
+        const games = peer.games;
+        const stamps: { t: number; env: ActionEnvelope }[] = [];
+        host.onMessage(EVT.action, (env: ActionEnvelope) => stamps.push({ t: Date.now(), env }));
+        host.send(MSG.addBot);
+        host.send(MSG.addBot);
+        await waitFor(() => (peer.snapshots.at(-1)?.seats.length === 3 ? true : undefined));
+        host.send(MSG.start, { ruleSetId: "base" });
+        await waitFor(() => (games[0] && peer.ruleSet ? true : undefined));
+        const ruleSet = peer.ruleSet;
+
+        // Feed Ada's moves (first legal placement, roll, end turn) until two full bot turns have gone by.
+        const latest = () => games.at(-1)!;
+        let botRolls = 0;
+        let guard = 0;
+        while (botRolls < 2 && guard++ < 200) {
+          const state = latest();
+          const before = games.length;
+          if (nextActor(state) === 0) {
+            const acts = legalActions(state, ruleSet!, 0);
+            host.send(MSG.action, acts.find((a) => a.type === "rollDice") ?? acts.find((a) => a.type === "endTurn") ?? acts[0]!);
+          }
+          await waitFor(() => (games.length > before ? true : undefined), 5000);
+          botRolls = stamps.filter((s) => s.env.playerId !== 0 && s.env.action.type === "rollDice").length;
+        }
+        const gapBefore = (i: number) => stamps[i]!.t - stamps[i - 1]!.t;
+        for (let i = 1; i < stamps.length; i++) {
+          const { env } = stamps[i]!;
+          if (env.playerId === 0) continue;
+          const prev = stamps[i - 1]!.env;
+          const sameBot = prev.playerId === env.playerId;
+          if (env.action.type === "rollDice") expect(gapBefore(i)).toBeGreaterThanOrEqual(pacing.beforeRollMs - 20);
+          else if (env.action.type === "endTurn" && sameBot && prev.action.type === "rollDice") expect(gapBefore(i)).toBeGreaterThanOrEqual(pacing.afterRollMs + pacing.beforeEndTurnMs - 20);
+          else if (sameBot && prev.action.type === "rollDice") expect(gapBefore(i)).toBeGreaterThanOrEqual(pacing.afterRollMs - 20);
+          else if (env.action.type !== "endTurn" && !["discardCards", "respondTrade"].includes(env.action.type)) expect(gapBefore(i)).toBeGreaterThanOrEqual(pacing.betweenActionsMs - 20);
+        }
+        expect(botRolls).toBe(2);
+        // The dice shown after each bot roll are the engine's (seeded) — every state is new, none repeated.
+        for (let i = 1; i < games.length; i++) expect(games[i]).not.toEqual(games[i - 1]);
+        await host.leave();
+      } finally {
+        await server.shutdown();
+        server = await bootServer(store);
       }
     });
   });

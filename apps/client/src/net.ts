@@ -9,6 +9,7 @@ import {
   MSG,
   ROOM_NAME,
   type Action,
+  type ActionEnvelope,
   type ErrorPayload,
   type GameState,
   type JoinOptions,
@@ -28,6 +29,8 @@ export interface NetState {
   snapshot?: RoomSnapshot;
   ruleSet?: RuleSet;
   game?: GameState;
+  /** The action the server applied most recently (presentation only). */
+  lastAction?: ActionEnvelope;
   /** Last error from the server or the connection; cleared on the next successful message. */
   error?: string;
   connected: boolean;
@@ -144,6 +147,7 @@ function wire(r: Room, options: JoinOptions): void {
     set({ snapshot, screen: snapshot.started ? "game" : "lobby" });
   });
   r.onMessage(EVT.ruleset, (ruleSet: RuleSet) => set({ ruleSet }));
+  r.onMessage(EVT.action, (lastAction: ActionEnvelope) => set({ lastAction }));
   r.onMessage(EVT.game, (game: GameState) => set({ game, screen: "game", error: undefined }));
   r.onMessage(EVT.error, (err: ErrorPayload) => set({ error: err.message }));
 

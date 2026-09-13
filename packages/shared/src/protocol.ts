@@ -82,6 +82,13 @@ export const EVT = {
   ruleset: "ruleset",
   /** Full authoritative GameState, broadcast after every applied action. */
   game: "game",
+  /**
+   * The ActionEnvelope the server just applied (human or bot), broadcast
+   * immediately before the matching `game` state. Presentation only: lets a
+   * client narrate "Bot Ada rolled 8" from the authoritative action rather
+   * than by diffing states. Never persisted, never needed to render state.
+   */
+  action: "action",
   /** A rejected intent or other problem, sent only to the offending client. */
   error: "error",
 } as const;

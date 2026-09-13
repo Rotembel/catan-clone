@@ -30,6 +30,7 @@ import {
   MIN_PLAYERS,
   MSG,
   type Action,
+  type ActionEnvelope,
   type BuildInfo,
   type GameState,
   type JoinOptions,
@@ -39,6 +40,7 @@ import {
 } from "@catan/shared";
 import { randomBytes } from "node:crypto";
 import { MemoryStore, type GameRecord, type GameStore, type StoredSeat } from "./store.js";
+import { botDelayFor, uniformBotPacing, HOME_BOT_PACING, type BotPacing } from "./botPacing.js";
 
 interface SeatRecord extends StoredSeat {
   sessionId: string | undefined;
@@ -52,6 +54,8 @@ export interface ServerOptions {
   persistence?: string;
   /** Pause before each bot move so humans can follow along. 0 in tests. */
   botDelayMs?: number;
+  /** Phase-aware pacing (overrides botDelayMs when given). */
+  botPacing?: BotPacing;
 }
 
 /** What onCreate sees: the client's join options plus the server defaults. */
@@ -78,7 +82,9 @@ export class CatanRoom extends Room {
   private store: GameStore = new MemoryStore();
   private build: BuildInfo = DEFAULT_BUILD;
   private persistence = "memory";
-  private botDelayMs = 700;
+  private botPacing: BotPacing = HOME_BOT_PACING;
+  /** The last envelope this room applied — presentation memory only, never persisted. */
+  private lastApplied: ActionEnvelope | undefined;
   private createdAt = Date.now();
   private emptyTimer: ReturnType<typeof setTimeout> | undefined;
   private botTimer: ReturnType<typeof setTimeout> | undefined;
@@ -90,7 +96,8 @@ export class CatanRoom extends Room {
     if (options.store) this.store = options.store;
     if (options.build) this.build = options.build;
     if (options.persistence) this.persistence = options.persistence;
-    if (options.botDelayMs !== undefined) this.botDelayMs = options.botDelayMs;
+    if (options.botDelayMs !== undefined) this.botPacing = uniformBotPacing(options.botDelayMs);
+    if (options.botPacing) this.botPacing = options.botPacing;
     this.setMetadata({ code: this.code });
 
     const record = await this.store.load(this.code);
@@ -285,6 +292,8 @@ export class CatanRoom extends Room {
     // Durable first, then visible.
     await this.persist();
     this.applying = false;
+    this.lastApplied = { playerId, action };
+    this.broadcast(EVT.action, this.lastApplied);
     this.broadcast(EVT.game, this.game);
     this.scheduleBots();
     return true;
@@ -296,7 +305,13 @@ export class CatanRoom extends Room {
     return this.seats.filter((s) => s.kind === "human" && s.connected).length;
   }
 
-  /** (Re)arm the single bot timer if the next actor is a bot and a human is watching. */
+  /**
+   * (Re)arm the single bot timer if the next actor is a bot and a human is
+   * watching. The move is chosen *now* (deterministic: seat rng + state) so
+   * the pause can depend on what it is — roll, build, end turn — and applied
+   * after the pause only if the world hasn't moved on. Timing never touches
+   * the rng: the seat's rng advances only when the move is actually applied.
+   */
   private scheduleBots(): void {
     this.stopBots();
     if (!this.game || !this.ruleSet || this.game.winner !== undefined) return;
@@ -305,7 +320,16 @@ export class CatanRoom extends Room {
     if (actor === undefined) return;
     const seat = this.seats.find((s) => s.playerId === actor);
     if (seat?.kind !== "bot") return;
-    this.botTimer = setTimeout(() => void this.runBotMove(actor), this.botDelayMs);
+
+    const state = this.game;
+    const rng = seat.botRng ?? createRng(`${this.code}-bot-${actor}`);
+    const choice = chooseAction(state, this.ruleSet, actor, rng);
+    if (!choice.action) {
+      console.error(`bot ${seat.name} has no legal action in phase ${state.turn.phase}`);
+      return;
+    }
+    const delay = botDelayFor(this.botPacing, choice.action, this.lastApplied?.action, this.lastApplied?.playerId === actor);
+    this.botTimer = setTimeout(() => void this.runBotMove(actor, state, choice.action!, choice.rng), delay);
   }
 
   private stopBots(): void {
@@ -313,22 +337,15 @@ export class CatanRoom extends Room {
     this.botTimer = undefined;
   }
 
-  private async runBotMove(playerId: number): Promise<void> {
+  private async runBotMove(playerId: number, chosenFor: GameState, action: Action, rngAfter: string): Promise<void> {
     this.botTimer = undefined;
     if (!this.game || !this.ruleSet) return;
-    // The world may have moved on since the timer was armed.
-    if (nextActor(this.game) !== playerId) return this.scheduleBots();
+    // The world may have moved on since the timer was armed: re-choose.
+    if (this.game !== chosenFor || nextActor(this.game) !== playerId) return this.scheduleBots();
     const seat = this.seats.find((s) => s.playerId === playerId);
     if (!seat || seat.kind !== "bot") return;
-
-    const rng = seat.botRng ?? createRng(`${this.code}-bot-${playerId}`);
-    const choice = chooseAction(this.game, this.ruleSet, playerId, rng);
-    seat.botRng = choice.rng;
-    if (!choice.action) {
-      console.error(`bot ${seat.name} has no legal action in phase ${this.game.turn.phase}`);
-      return;
-    }
-    await this.applyEnvelope(playerId, choice.action);
+    seat.botRng = rngAfter;
+    await this.applyEnvelope(playerId, action);
   }
 
   // -- persistence ---------------------------------------------------------

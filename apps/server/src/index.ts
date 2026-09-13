@@ -14,12 +14,13 @@ import { ROOM_NAME } from "@catan/shared";
 import { describeBuild, readBuildInfo } from "./build.js";
 import { CatanRoom } from "./CatanRoom.js";
 import { FileStore } from "./store.js";
+import { pacingFromEnv } from "./botPacing.js";
 
 const port = Number(process.env.PORT ?? 2567);
 const dataDir = resolve(process.env.CATAN_DATA_DIR ?? "data");
 const store = new FileStore(dataDir);
 const build = readBuildInfo();
-const botDelayMs = Number(process.env.BOT_DELAY_MS ?? 700);
+const botPacing = pacingFromEnv(process.env);
 
 const gameServer = new Server({
   transport: new WebSocketTransport({ server: createServer() }),
@@ -29,7 +30,7 @@ const gameServer = new Server({
 // lands in the live room for that code — or creates one, which then
 // rehydrates from the store if the code is known.
 gameServer
-  .define(ROOM_NAME, CatanRoom, { store, build, persistence: dataDir, botDelayMs })
+  .define(ROOM_NAME, CatanRoom, { store, build, persistence: dataDir, botPacing })
   .filterBy(["code"]);
 
 gameServer.listen(port).then(async () => {

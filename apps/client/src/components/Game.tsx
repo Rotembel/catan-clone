@@ -34,6 +34,8 @@ import { clearError, leaveRoom, sendAction, type NetState } from "../net.js";
 import { Board, type BoardTargets } from "./Board.js";
 import { PLAYER_COLORS } from "./colors.js";
 import { edgeTapAction, vertexTapAction } from "./tapDispatch.js";
+import { bankOffer, playerOffer, sideSummary } from "./tradeOffer.js";
+import { botIntent, narrate } from "./narrate.js";
 
 const RESOURCE_ICON: Record<Resource, string> = {
   wood: "🌲",
@@ -122,6 +124,13 @@ export function Game({ net, game, ruleSet, me }: Props) {
   const current = game.players[game.turn.current]!;
   const isMyTurn = current.id === me;
   const over = game.winner !== undefined;
+  const canTrade = isMyTurn && game.turn.phase === "mainTurn" && !over;
+  useEffect(() => {
+    // A trade form only makes sense on my own main turn; if the world moves
+    // on underneath it (restart, someone else's turn), drop it rather than
+    // leave a dialog whose Offer can never be legal.
+    if (!canTrade) setDialog((d) => (d === "bank" || d === "trade" ? null : d));
+  }, [canTrade]);
 
   const settlementVertices = useMemo(
     () => new Set(legal.flatMap((a) => (a.type === "buildSettlement" ? [a.vertex] : []))),
@@ -332,6 +341,9 @@ export function Game({ net, game, ruleSet, me }: Props) {
   const owesDiscard = (game.pendingDiscards ?? []).includes(me);
   const owesProgressDiscard = (game.pendingProgressDiscards ?? []).includes(me);
   const tradeForMe = game.pendingTrade?.toPlayerId === me ? game.pendingTrade : undefined;
+  const isBot = (id: number) => net.snapshot?.seats.find((s) => s.playerId === id)?.kind === "bot";
+  const ticker = narrate(net.lastAction, game, ruleSet, me);
+  const intent = botIntent(game, isBot);
 
   return (
     <div className="game">
@@ -364,6 +376,12 @@ export function Game({ net, game, ruleSet, me }: Props) {
             <div className="dice" aria-label="dice">
               <span>{game.dice[0]}</span>
               <span>{game.dice[1]}</span>
+            </div>
+          )}
+          {(ticker || intent) && (
+            <div className="ticker" data-testid="ticker" aria-live="polite">
+              {ticker && <span>{ticker}</span>}
+              {intent && <span className="muted">{intent}</span>}
             </div>
           )}
         </div>
@@ -791,13 +809,21 @@ function Counter({
   );
 }
 
-function Modal({ title, children, onClose }: { title: string; children: ReactNode; onClose?: () => void }) {
+function Modal({ title, children, onClose, footer }: { title: string; children: ReactNode; onClose?: () => void; footer?: ReactNode }) {
+  // The body scrolls; the footer (primary action + Cancel) is always on
+  // screen, whatever the viewport — a tall C&K trade form must never hide
+  // its Offer/Cancel buttons below the fold (the real-iPad "stuck trade").
   return (
     <div className="modal-backdrop">
       <div className="modal" role="dialog" aria-label={title}>
         <h3>{title}</h3>
-        {children}
-        {onClose && <div className="row end"><button onClick={onClose}>Cancel</button></div>}
+        <div className="modal-body">{children}</div>
+        {(footer || onClose) && (
+          <div className="modal-footer">
+            {footer}
+            {onClose && <button onClick={onClose}>Cancel</button>}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -810,14 +836,18 @@ function DiscardDialog({ game, ruleSet, me }: { game: GameState; ruleSet: RuleSe
   const { get, bump, total, asPartial } = useCounts(cards);
   const reason = game.turn.phase === "forcedDiscard" ? (game.discardRequests?.find((r) => r.playerId === me)?.reason ?? "forced") : "seven";
   return (
-    <Modal title={reason === "seven" ? `A 7 was rolled — discard ${need} cards` : `${reason === "saboteur" ? "Saboteur!" : "Forced discard —"} discard ${need} cards`}>
+    <Modal
+      title={reason === "seven" ? `A 7 was rolled — discard ${need} cards` : `${reason === "saboteur" ? "Saboteur!" : "Forced discard —"} discard ${need} cards`}
+      footer={
+        <>
+          <span className="muted">{total}/{need}</span>
+          <button className="primary" disabled={total !== need} onClick={() => sendAction({ type: "discardCards", discard: asPartial() })}>
+            Discard
+          </button>
+        </>
+      }
+    >
       <Counter cards={cards} get={get} bump={(c, d) => bump(c, d, heldOf(player, c))} limit={(c) => heldOf(player, c)} />
-      <div className="row end">
-        <span className="muted">{total}/{need}</span>
-        <button className="primary" disabled={total !== need} onClick={() => sendAction({ type: "discardCards", discard: asPartial() })}>
-          Discard
-        </button>
-      </div>
     </Modal>
   );
 }
@@ -850,14 +880,18 @@ function TradeResponse({ game, ruleSet, offer, me }: { game: GameState; ruleSet:
     cardsIn(ruleSet).every((c) => heldOf(mine, c) >= (offer.receive[c] ?? 0)) &&
     holdsCards(mine.devCards, offer.receiveDevCards ?? []);
   return (
-    <Modal title={`${from.name} proposes a trade`}>
+    <Modal
+      title={`${from.name} proposes a trade`}
+      footer={
+        <>
+          <button onClick={() => sendAction({ type: "respondTrade", accept: false })}>Decline</button>
+          <button className="primary" disabled={!canAccept} onClick={() => sendAction({ type: "respondTrade", accept: true })}>Accept</button>
+        </>
+      }
+    >
       <p>They give you: <b>{fmt(offer.give, offer.giveDevCards, ruleSet)}</b></p>
       <p>You give them: <b>{fmt(offer.receive, offer.receiveDevCards, ruleSet)}</b></p>
       {!canAccept && <p className="error">You don't have what they're asking for.</p>}
-      <div className="row end">
-        <button onClick={() => sendAction({ type: "respondTrade", accept: false })}>Decline</button>
-        <button className="primary" disabled={!canAccept} onClick={() => sendAction({ type: "respondTrade", accept: true })}>Accept</button>
-      </div>
     </Modal>
   );
 }
@@ -867,35 +901,44 @@ function BankTradeDialog({ game, ruleSet, me, onClose }: { game: GameState; rule
   const resourceRatios = tradeRatiosFor(game, ruleSet, me);
   const commodityRatio = commodityTradeRatioFor(game, ruleSet, me);
   const cards = cardsIn(ruleSet);
-  const ratioOf = (c: Card) => (c in resourceRatios ? resourceRatios[c as Resource] : commodityRatio);
+  const ctx = {
+    held: (c: Card) => heldOf(player, c),
+    inBank: (c: Card) => bankOf(game, c),
+    ratio: (c: Card) => (c in resourceRatios ? resourceRatios[c as Resource] : commodityRatio),
+  };
   const [give, setGive] = useState<Card | null>(null);
   const [receive, setReceive] = useState<Card | null>(null);
-  const ok = give && receive && give !== receive && heldOf(player, give) >= ratioOf(give) && bankOf(game, receive) > 0;
+  const offer = bankOffer(me, { give, receive }, ctx);
   return (
-    <Modal title="Trade with the bank" onClose={onClose}>
+    <Modal
+      title="Trade with the bank"
+      onClose={onClose}
+      footer={
+        <>
+          <span className="muted summary">
+            {offer ? `${sideSummary(offer.give, undefined, (c) => CARD_ICON[c])} → ${sideSummary(offer.receive, undefined, (c) => CARD_ICON[c])}` : "Pick a card to give and one to receive."}
+          </span>
+          <button className="primary" disabled={!offer} onClick={() => { sendAction({ type: "proposeTrade", offer: offer! }); onClose(); }}>
+            Trade
+          </button>
+        </>
+      }
+    >
       <p className="muted">Give</p>
       <div className="row wrap">
         {cards.map((c) => (
-          <button key={c} className={give === c ? "chip on" : "chip"} disabled={heldOf(player, c) < ratioOf(c)} onClick={() => setGive(c)}>
-            {ratioOf(c)} {CARD_ICON[c]} {c}
+          <button key={c} className={give === c ? "chip on" : "chip"} disabled={ctx.held(c) < ctx.ratio(c)} onClick={() => setGive(c)}>
+            {ctx.ratio(c)} {CARD_ICON[c]} {c}
           </button>
         ))}
       </div>
       <p className="muted">Receive</p>
       <div className="row wrap">
         {cards.map((c) => (
-          <button key={c} className={receive === c ? "chip on" : "chip"} disabled={c === give || bankOf(game, c) === 0} onClick={() => setReceive(c)}>
+          <button key={c} className={receive === c ? "chip on" : "chip"} disabled={c === give || ctx.inBank(c) === 0} onClick={() => setReceive(c)}>
             1 {CARD_ICON[c]} {c}
           </button>
         ))}
-      </div>
-      <div className="row end">
-        <button className="primary" disabled={!ok} onClick={() => {
-          sendAction({ type: "proposeTrade", offer: { fromPlayerId: me, give: { [give!]: ratioOf(give!) }, receive: { [receive!]: 1 } } });
-          onClose();
-        }}>
-          Trade
-        </button>
       </div>
     </Modal>
   );
@@ -954,13 +997,32 @@ function PlayerTradeDialog({ game, ruleSet, me, onClose }: { game: GameState; ru
   const [wantCards, setWantCards] = useState<Record<string, number>>({});
   const bump = (set: typeof setGiveCards) => (id: string, n: number) =>
     set((c) => ({ ...c, [id]: Math.max(0, n) }));
-  const giveCardList = expandCounts(giveCards);
-  const wantCardList = expandCounts(wantCards);
-  const givesSomething = give.total > 0 || giveCardList.length > 0;
-  const wantsSomething = receive.total > 0 || wantCardList.length > 0;
-  const ok = givesSomething && wantsSomething;
+  const offer = playerOffer(me, {
+    to,
+    give: give.asPartial(),
+    receive: receive.asPartial(),
+    giveDevCards: expandCounts(giveCards),
+    receiveDevCards: expandCounts(wantCards),
+  });
+  const icon = (c: Card) => CARD_ICON[c];
+  const toName = game.players.find((p) => p.id === to)?.name ?? "";
   return (
-    <Modal title="Propose a trade" onClose={onClose}>
+    <Modal
+      title="Propose a trade"
+      onClose={onClose}
+      footer={
+        <>
+          <span className="muted summary">
+            {offer
+              ? `To ${toName}: give ${sideSummary(offer.give, offer.giveDevCards, icon)} for ${sideSummary(offer.receive, offer.receiveDevCards, icon)}`
+              : "Add what you give and what you want."}
+          </span>
+          <button className="primary" disabled={!offer} onClick={() => { sendAction({ type: "proposeTrade", offer: offer! }); onClose(); }}>
+            Offer
+          </button>
+        </>
+      }
+    >
       <div className="row wrap">
         {others.map((p) => (
           <button key={p.id} className={to === p.id ? "chip on" : "chip"} onClick={() => setTo(p.id)}>
@@ -978,24 +1040,6 @@ function PlayerTradeDialog({ game, ruleSet, me, onClose }: { game: GameState; ru
       {devCardsOn && (
         <DevCardCounter label="want-dev-cards" ruleSet={ruleSet} counts={wantCards} onChange={bump(setWantCards)} />
       )}
-      <div className="row end">
-        <button className="primary" disabled={!ok} onClick={() => {
-          sendAction({
-            type: "proposeTrade",
-            offer: {
-              fromPlayerId: me,
-              toPlayerId: to,
-              give: give.asPartial(),
-              receive: receive.asPartial(),
-              ...(giveCardList.length ? { giveDevCards: giveCardList } : {}),
-              ...(wantCardList.length ? { receiveDevCards: wantCardList } : {}),
-            },
-          });
-          onClose();
-        }}>
-          Offer
-        </button>
-      </div>
     </Modal>
   );
 }
