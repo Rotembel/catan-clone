@@ -40,3 +40,13 @@ Current repo status reported by Claude when these docs were prepared:
 - next planned expansion slice: event die, barbarians, knights.
 
 The home release should remain independently shippable from later C&K slices.
+
+## Reusable card-effect pattern (from C&K slice 3, for future custom/event decks)
+
+`packages/engine/src/progress/types.ts` — a card is a small pure module:
+`{ id, options(state, ruleSet, playerId) → payload[], apply(state, ruleSet, playerId, payload) → state }`.
+`options` is the bounded legal-payload enumeration that `legalActions` lists (so bots and
+the UI need no card-specific knowledge); `apply` validates and returns the new state.
+Definitions (id, category, count, timing) are rule-set data; decks are
+`{ draw, discard }` piles in `GameState` with seeded shuffles. A Phase 6 custom deck is
+the same shape with its own registry and definitions — not a scripting engine.

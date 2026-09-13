@@ -18,14 +18,14 @@ API reported it **public** on 2026-09-13 — not changed by the agent) · local:
 | 2 Real-time multiplayer | done | `4360969` | 8 socket tests; played live in two browser tabs |
 | 3 Stability | done | `598acf4` | server killed & restarted mid-game twice; both tabs resumed and play continued |
 | 4 House rule #1 (trade dev cards) | done | `9bd4bad` | flag-on/off tests at ruleset, engine, server; live offer of a card |
-| 5 Cities & Knights | **slices 1–2 of 5 done** (1: commodities + city improvements; 2: event die, barbarians, knights) — paused after slice 2 by owner decision | `d8ec23a`, slice-2 commit | 34 engine tests for the expansion + 4 seeded bot games at 13 VP with card conservation, a barbarian attack, and knights built |
+| 5 Cities & Knights | **slices 1–3 of 5 done** (1: commodities + city improvements; 2: event die, barbarians, knights; 3: progress cards) | `d8ec23a`, `8f4db83`, slice-3 commit | 56 engine tests for the expansion + 4 seeded bot games at 13 VP with resource, commodity *and* progress-card conservation |
 | 6 Custom content | not started | — | |
 
 Also done outside the phase list: client server-URL derives from the
 page's hostname (LAN play), `.env.example`, `HANDOFF.md`.
 
-**175 tests** across the workspace (engine 105, rulesets 25, client 3,
-cli 16, server 26; `@catan/bot` has none of its own). `pnpm typecheck` clean
+**198 tests** across the workspace (engine 127, rulesets 25, client 3,
+cli 16, server 27; `@catan/bot` has none of its own). `pnpm typecheck` clean
 in all 7 packages.
 
 ### Cities & Knights plan (Phase 5, in slices — owner chose "full C&K, in slices")
@@ -66,8 +66,61 @@ in all 7 packages.
    count / Defender awards, and a forced downgrade is answered by clicking one of your
    cities. No UI yet to build/activate/promote/move knights (slice 5) — humans can't
    defend, so barbarians will win in a human-only C&K game.
-3. progress cards (three decks, drawn by event die vs. improvement level; aqueduct at
-   science 3)
+3. **done** — progress cards. **Architecture:** `packages/engine/src/progress/` —
+   `deck.ts` (three independent `ProgressDeck {draw, discard}` piles in
+   `GameState.progressDecks`, seeded shuffle at game creation *only when the expansion
+   is on*, reshuffle of the discard pile when a draw pile is empty, both empty → no
+   card), `draw.ts` (event-die distribution), `registry.ts` + `cards/{trade,politics,
+   science}.ts` (one small `ProgressCardImpl { id, options(state, ruleSet, playerId):
+   payload[], apply(...) }` per card — *options* is the bounded legal-payload
+   enumeration `legalActions` lists, *apply* validates and returns the new state),
+   and `reducers/progress.ts` (hand, timing, phase flow). Card *definitions* (id,
+   category, count, `timing: mainTurn | beforeRoll | immediate`) are data in
+   `citiesAndKnights.progressCards`; the decks contain only implemented cards for now.
+   **Event die:** dice are still drawn first and the event die second (one extra
+   `nextInt`), so the persisted RNG sequence is unchanged; a city-gate face deals cards
+   *before* production (same stash-and-`resolveRoll` pattern as the barbarian
+   downgrade). Eligibility: `improvements[track] >= 1 && red <= level + 1` with the red
+   die = `dice[0]`; draw order = roller, then seat order. VP cards (`immediate`) resolve
+   on draw into `Player.progressVictoryPoints` (public VP) and go to the discard pile.
+   **Hand limit** `progressHandLimit` 4: drawing past it enters phase
+   `progressDiscard` with `pendingProgressDiscards`; `discardProgressCard` is the only
+   legal action for those players; when all are within the limit the stashed roll
+   resolves. **Alchemist** stores `alchemistDice`; the next `rollDice` uses them
+   (no dice draw that turn; the event die still rolls). **Inventor** writes
+   `BoardState.tokenOverrides` — the `RuleSet.board` layout is never mutated;
+   `effectiveNumberToken()` is what production, the bot and the client read.
+   **Merchant Fleet** sets `Player.merchantFleet` (2:1 for that card in
+   `tradeRatiosFor`/`commodityTradeRatioFor`), cleared on `endTurn`.
+   **State/actions added:** `Player.progressCards/progressVictoryPoints/merchantFleet`,
+   `GameState.progressDecks/pendingProgressDiscards/alchemistDice`,
+   `BoardState.tokenOverrides`, `TurnPhase "progressDiscard"`, actions
+   `playProgressCard {cardId, payload}` and `discardProgressCard {cardId}`, payload
+   types `*Payload` in shared. `normalizeState` back-fills all of it, so base, Home
+   Large and slice-1/2 saves load unchanged (tested).
+   **Implemented (13):** trade — Resource Monopoly ×4, Trade Monopoly ×2, Merchant
+   Fleet ×2; politics — Bishop ×2, Warlord ×2, Spy ×3, Constitution ×1 (VP); science —
+   Irrigation ×2, Mining ×2, Road Building ×2, Inventor ×2, Alchemist ×2, Smith ×2,
+   Printer ×1 (VP). **Deferred:** Merchant ×6, Commercial Harbor ×2, Master Merchant ×2
+   (merchant piece / negotiation — slice 4+), Deserter ×2, Diplomat ×2, Intrigue ×2
+   (knight displacement and road removal are not implemented), Saboteur ×2, Wedding ×2
+   (multi-player forced responses need a pending-response phase), Medicine ×2, Crane ×2
+   (cost modifiers), Engineer ×1 (city walls — slice 4). Adding one = a definition in
+   the rule set + one `ProgressCardImpl`; no reducer or type change.
+   **Known rules deviations / TODOs:** Spy cannot be played when your hand is full
+   (official: take, then discard down); a tied barbarian defence still awards nothing
+   (official: progress cards to the tied players — now implementable); the Bishop steals
+   from every adjacent opponent with the game RNG (official); deck sizes are the
+   official counts of the implemented cards only; progress cards can be played any
+   number of times per turn (official has no per-turn cap either, except Alchemist
+   before the roll).
+   **Bot:** discards the first card when over the limit; plays Irrigation/Mining,
+   Warlord, Resource Monopoly (when it nets ≥ 2) and Road Building; holds everything
+   else. Never deadlocks (every mandatory phase is enumerated by `legalActions`).
+   **Client:** hand with Play buttons where legal; choice-less cards send immediately;
+   Bishop and Inventor pick hexes on the board; Spy/monopolies/fleet/Alchemist/Smith use
+   a list picker; a modal handles the forced discard; moved tokens render. Verified by
+   typecheck and the engine tests only — no live drill this slice.
 4. metropolises (level 4/5), city walls, merchant
 5. client UI for all of the above (slice 1's UI is already in)
 
