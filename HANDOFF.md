@@ -18,13 +18,13 @@ API reported it **public** on 2026-09-13 — not changed by the agent) · local:
 | 2 Real-time multiplayer | done | `4360969` | 8 socket tests; played live in two browser tabs |
 | 3 Stability | done | `598acf4` | server killed & restarted mid-game twice; both tabs resumed and play continued |
 | 4 House rule #1 (trade dev cards) | done | `9bd4bad` | flag-on/off tests at ruleset, engine, server; live offer of a card |
-| 5 Cities & Knights | **slices 1–3 of 5 done** (1: commodities + city improvements; 2: event die, barbarians, knights; 3: progress cards) | `d8ec23a`, `8f4db83`, slice-3 commit | 56 engine tests for the expansion + 4 seeded bot games at 13 VP with resource, commodity *and* progress-card conservation |
+| 5 Cities & Knights | **slices 1–4 of 5 done** (1: commodities + improvements; 2: event die, barbarians, knights; 3: progress cards; 4: metropolises, city walls, merchant) — only slice 5 (UI polish) remains | `d8ec23a`, `8f4db83`, `15cf23b`, slice-4 commit | 72 engine tests for the expansion + 4 seeded bot games at 13 VP with resource, commodity and progress-card conservation |
 | 6 Custom content | not started | — | |
 
 Also done outside the phase list: client server-URL derives from the
 page's hostname (LAN play), `.env.example`, `HANDOFF.md`.
 
-**198 tests** across the workspace (engine 127, rulesets 25, client 3,
+**214 tests** across the workspace (engine 143, rulesets 25, client 3,
 cli 16, server 27; `@catan/bot` has none of its own). `pnpm typecheck` clean
 in all 7 packages.
 
@@ -121,8 +121,53 @@ in all 7 packages.
    Bishop and Inventor pick hexes on the board; Spy/monopolies/fleet/Alchemist/Smith use
    a list picker; a modal handles the forced discard; moved tokens render. Verified by
    typecheck and the engine tests only — no live drill this slice.
-4. metropolises (level 4/5), city walls, merchant
-5. client UI for all of the above (slice 1's UI is already in)
+4. **done** — metropolises, city walls, the merchant, and five previously deferred cards.
+   **Metropolises** (`reducers/metropolis.ts`): canonical ownership in
+   `GameState.metropolises[track] = { playerId, vertex }` (one per track; the building
+   under it stays a plain city; no duplication). Rules as data in
+   `citiesAndKnights.metropolis { claimLevel 4, takeLevel 5, victoryPoints 2 }`: reaching
+   claimLevel claims an unowned metropolis; reaching takeLevel takes it from a holder
+   still below takeLevel; a holder at takeLevel can never lose it. **Ties:** first to
+   claimLevel keeps it (a second player at 4 changes nothing); holder at 4 vs challenger
+   at 5 → transfer; both at 5 → holder keeps. It must stand on one of your cities: one
+   eligible city places automatically, several → phase `metropolisPlacement` with
+   `pendingMetropolis` and action `placeMetropolis {vertex}` (nothing else legal), none →
+   the claim stays open and lands on the next city you build. Claims are checked after
+   `buildImprovement`, `buildCity`, Medicine and Crane. Immune to the barbarians
+   (`cityVertices` excludes them; a player whose only cities are metropolises is not at
+   risk). +2 VP each, counted in `expansionVictoryPoints` and shown in the public VP.
+   **City walls** (`reducers/walls.ts`): `BoardState.walls[vertex] = owner`; action
+   `buildWall {vertex}`; data `citiesAndKnights.wall { cost {brick 2}, perPlayer 3,
+   discardBonus 2 }`; only on your own cities, one per city. Each wall raises *that
+   player's* robber threshold (`discardThresholdFor` = 7 + walls × bonus), used by the 7
+   roll and `discardCountFor`; walls are removed when the barbarians downgrade the city.
+   No VP. **Merchant** (`GameState.merchant = { hex, playerId }`): placed/moved by the
+   Merchant card onto a land hex next to one of your buildings; the owner trades that
+   hex's resource 2:1 (`tradeRatiosFor`); +1 VP (`merchantVictoryPoints`); another
+   player's card moves it and takes the VP.
+   **Cards now implemented (+5 → 18):** Merchant ×6, Master Merchant ×2 (take up to 2
+   cards of your choice from a player with more VP — hands are open state here, as
+   they are on the wire), Engineer ×1 (free wall), Medicine ×2 (city for 2 ore + 1
+   wheat), Crane ×2 (improvement for one commodity less — level 1 becomes free, per the
+   official card). **Still deferred (B):** Commercial Harbor, Deserter, Wedding
+   (opponent-choice response phases), Diplomat (road removal + re-placement follow-up),
+   Intrigue (knight displacement), Saboteur (forced half-hand discard outside the 7
+   pipeline). **VP sources audited (no double counting):** settlements 1, cities 2,
+   longest road 2, largest army 2, Defender of Catan, progress VP cards, metropolis 2,
+   merchant 1 — all public via `refresh`; hidden VP dev cards only in `totalVictoryPoints`;
+   the threshold stays `ruleSet.victoryPoints`. Persisted/reloaded state yields identical
+   VP (tested). `normalizeState` back-fills `walls`, `metropolises`; older saves load.
+   **Bot:** builds a wall when affordable (best city), places a metropolis on its
+   best-producing city, plays Medicine/Crane/Engineer/Master Merchant when legal and the
+   Merchant on its highest-pip eligible hex. **Client:** metropolis ★ over the city, a
+   dashed ring for a wall, an "M" chip on the merchant's hex; wall and metropolis
+   placements are board clicks; Engineer/Medicine/Merchant pick on the board,
+   Crane/Master Merchant from a list. Verified by typecheck and engine tests only.
+   **Deviations / TODOs:** a metropolis transfer with no eligible city waits for the
+   next city (official: same); the barbarians never target a player with only
+   metropolises (official: they lose nothing — same); Master Merchant lets you see the
+   target's hand (official: you look at it — same, since state is open).
+5. client UI polish for all of the above (slice 1–4 UIs are functional but plain)
 
 ## HOME STABLE v0.1 — built, release candidate for `v0.6.0-home.1` (NOT tagged yet)
 
