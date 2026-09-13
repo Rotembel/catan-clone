@@ -6,8 +6,8 @@ exists, how it's verified, what's decided, what's next.
 
 Repo: https://github.com/Rotembel/catan-clone (created private; the GitHub
 API reported it **public** on 2026-09-13 — not changed by the agent) · local:
-`~/Desktop/catan-starter-docs` · `main` is green and pushed as of `5a15a35`
-(C&K slice 5) plus the docs commit after it.
+`~/Desktop/catan-starter-docs` · `main` is green and pushed as of the iPad Build-Knight
+touch fix (client) plus the docs commit after it.
 
 ## Phases
 
@@ -24,7 +24,7 @@ API reported it **public** on 2026-09-13 — not changed by the agent) · local:
 Also done outside the phase list: client server-URL derives from the
 page's hostname (LAN play), `.env.example`, `HANDOFF.md`.
 
-**225 tests** across the workspace (engine 153, rulesets 25, client 3,
+**232 tests** across the workspace (engine 153, rulesets 25, client 10,
 cli 16, server 28; `@catan/bot` has none of its own). `pnpm typecheck` clean
 in all 7 packages.
 
@@ -445,13 +445,64 @@ Tests: `pnpm test`. Types: `pnpm typecheck`.
   (ratios/types are standard).
 - Largest-army/longest-road tie rule is implemented as *state* (holder kept
   until strictly beaten).
-- Client has only the `deriveServerUrl` unit test; UI is verified manually
-  (see the C&K slice-5 live drill for what was actually clicked).
+- Client unit tests cover `deriveServerUrl` and the board-tap → action
+  resolver (`tapDispatch.ts`); the rest of the UI is verified manually (see
+  the C&K slice-5 live drill for what was actually clicked).
 - Next phase: Phase 6 (custom content — house rules, custom event decks,
   61-hex maps) is *not started*; the Wi-Fi smoke test for HOME STABLE
   `v0.6.0-home.1` is still the gate for tagging.
 - Colyseus `maxClients` is set above 4 on purpose (per-seat limit is
   enforced in `onJoin`) so a full room stays listed for `joinOrCreate`.
+
+## iPad playtest fix — Build Knight tap did not commit (2026-09-13)
+
+**Symptom** (real iPad, C&K): Build Knight → legal white circles appear →
+tap a circle → the circle turns solid white ("selected") → nothing else
+happens; no `buildKnight` is sent. The desktop/mouse path was fine.
+
+**Root cause**: the client had no "selected vertex" state at all — every
+board target is a **one-tap commit** (tap → `sendAction` immediately; there
+is no Confirm step, by design). What the tester saw as "selected" was the
+`.target-vertex:hover` fill: on iOS the first tap of an element with a
+`:hover` rule applies hover, and the click is not reliably delivered. Two
+aggravators: the visible disc was ~12 px on a tablet (easy to miss, and a
+finger that moves a little becomes a pan, not a click), and the SVG had no
+`touch-action`, so a quick second tap was a double-tap zoom.
+
+**Fix** (client only; engine/bot/server untouched):
+- `styles.css`: all board `:hover` feedback is now inside
+  `@media (hover: hover)` (real pointers only); `.board` gets
+  `touch-action: manipulation` and no tap highlight.
+- `Board.tsx`: each vertex target is a `<g>` with an invisible 44 px hit
+  circle (`.target-hit`, r = 0.42·HEX) around the visible 23 px disc.
+- `Game.tsx` + new `components/tapDispatch.ts`: `onVertex`/`onEdge` are
+  now a pure resolver `vertexTapAction(mode, legal, v)` /
+  `edgeTapAction(mode, legal, e)` that re-checks the tapped target against
+  the **current** engine legal-action list on every tap (never the set
+  captured when the mode was entered), so a stale target can't submit after
+  legal actions change. Mode still resets to idle on every new server state.
+
+**Modes audited** (all share the same one-tap pattern; none had a
+"select without commit" path — the bug was the touch layer, not the mode
+logic): Build Knight, Move Knight (incl. displacement — the engine lists an
+occupied `to`), metropolis placement, city downgrade, wall placement,
+progress-card vertex/edge/hex targeting (Bishop-style vertex, Diplomat edge,
+hex cards), Merchant (hex), response prompts (vertex/edge), Road Building
+(two-tap by design, with "Build just one"), Inventor (two-tap by design).
+All vertex/edge modes now go through `tapDispatch.ts` and are covered by
+`apps/client/test/tapDispatch.test.ts` (7 tests, one driving the real engine:
+tap → `buildKnight` → knight placed, sheep/ore paid, same tap now inert).
+Hex modes (robber/knight/Merchant/Inventor/progressHex) still dispatch
+inline in `Game.tsx`; they got the same CSS/touch fix but no resolver test.
+
+**Verified**: `pnpm test` 232 green, `pnpm typecheck` clean; live drill in
+the in-app browser at tablet size — Build knight → 2 legal targets with
+44 px hit areas → tap on the hit ring outside the visible disc → knight on
+that vertex, hand 5→3, mode exited, legal actions refreshed. **Not verified
+on a real iPad** (no simulator on this machine and the in-app browser's
+touch emulation cannot be driven while the pane is hidden) — another iPad
+pass is recommended, and should also try Move Knight and a progress-card
+board target.
 
 ## Gotchas for the next worker
 
