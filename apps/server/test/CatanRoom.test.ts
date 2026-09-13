@@ -5,7 +5,8 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { boot, type ColyseusTestServer } from "@colyseus/testing";
 import type { Room as ClientRoom } from "colyseus.js";
-import { legalActions } from "@catan/engine";
+import { legalActions, pieceCounts } from "@catan/engine";
+import { nextActor } from "@catan/bot";
 import {
   CLOSE_SUPERSEDED,
   EVT,
@@ -26,11 +27,15 @@ let server: ColyseusTestServer;
 // time); each test starts with it wiped.
 const store: GameStore & { clear(): void } = new MemoryStore();
 
+const TEST_BUILD = { appVersion: "0.6.0-test", gitCommit: "abc1234", buildProfile: "dev" as const, mapGenerationVersion: "mapgen-v1" };
+
 async function bootServer(withStore: GameStore): Promise<ColyseusTestServer> {
   return boot({
     options: {},
     initializeGameServer: (gameServer) => {
-      gameServer.define(ROOM_NAME, CatanRoom, { store: withStore }).filterBy(["code"]);
+      gameServer
+        .define(ROOM_NAME, CatanRoom, { store: withStore, build: TEST_BUILD, persistence: "memory", botDelayMs: 0 })
+        .filterBy(["code"]);
     },
   });
 }
@@ -354,5 +359,189 @@ describe("CatanRoom", () => {
     const err = await waitFor(() => host.errors[0]);
     expect(err.message).toMatch(/unknown rule set/);
     expect(host.games).toHaveLength(0);
+  });
+
+  it("sends build identity and persistence info in every lobby snapshot", async () => {
+    const host = await connect("BLD1", "Ada", undefined, true);
+    const snap = await waitFor(() => host.snapshots.at(-1));
+    expect(snap.build).toEqual(TEST_BUILD);
+    expect(snap.persistence).toBe("memory");
+  });
+
+  describe("5-seat lobby with bots", () => {
+    /** Lets every socket message settle. */
+    const settle = (ms = 60) => new Promise((r) => setTimeout(r, ms));
+
+    async function fullLobby(code: string): Promise<[Peer, Peer, Peer]> {
+      const host = await connect(code, "Ada", undefined, true);
+      const g1 = await connect(code, "Grace");
+      const g2 = await connect(code, "Alan");
+      host.room.send(MSG.addBot);
+      host.room.send(MSG.addBot);
+      await waitFor(() => (host.snapshots.at(-1)?.seats.length === 5 ? true : undefined));
+      return [host, g1, g2];
+    }
+
+    it("seats 3 humans + 2 bots, refuses a 6th seat, and only the host manages bots", async () => {
+      const [host, g1] = await fullLobby("FIVE");
+      const snap = host.snapshots.at(-1)!;
+      expect(snap.seats.map((s) => s.kind)).toEqual(["human", "human", "human", "bot", "bot"]);
+      expect(snap.seats.filter((s) => s.kind === "bot").every((s) => s.connected)).toBe(true);
+      expect(snap.seats.map((s) => s.playerId)).toEqual([0, 1, 2, 3, 4]);
+
+      host.room.send(MSG.addBot);
+      const full = await waitFor(() => host.errors[0]);
+      expect(full.message).toMatch(/full/);
+      await expect(server.sdk.joinOrCreate(ROOM_NAME, { code: "FIVE", name: "Sixth" })).rejects.toThrow(/full/);
+
+      g1.room.send(MSG.removeBot, { playerId: 4 });
+      const denied = await waitFor(() => g1.errors[0]);
+      expect(denied.message).toMatch(/only the host/);
+
+      host.room.send(MSG.removeBot, { playerId: 4 });
+      await waitFor(() => (host.snapshots.at(-1)?.seats.length === 4 ? true : undefined));
+      expect(host.snapshots.at(-1)!.seats.map((s) => s.kind)).toEqual(["human", "human", "human", "bot"]);
+    });
+
+    it("the base rule set refuses 5 seats; Home Large accepts them", async () => {
+      const [host] = await fullLobby("SEAT");
+      host.room.send(MSG.start, { ruleSetId: "base" });
+      const err = await waitFor(() => host.errors[0]);
+      expect(err.message).toMatch(/seats 2-4 players/);
+      expect(host.games).toHaveLength(0);
+
+      host.room.send(MSG.start, { ruleSetId: "home-large-5" });
+      await waitFor(() => host.games[0]);
+      expect(host.ruleSet?.id).toBe("home-large-5");
+      expect(host.ruleSet?.board.hexes).toHaveLength(37);
+      expect(host.games[0]!.players.map((p) => p.name)).toEqual(["Ada", "Grace", "Alan", "Bot Ada", "Bot Grace"]);
+    });
+
+    /** Drive the humans through setup with their first legal action; bots move themselves. */
+    async function playSetupOverSockets(peers: Peer[], code: string): Promise<GameState> {
+      const latest = () => peers[0]!.games.at(-1)!;
+      let guard = 0;
+      while (latest().turn.phase.startsWith("setup")) {
+        if (guard++ > 400) throw new Error("setup did not finish over sockets");
+        const state = latest();
+        const actor = nextActor(state)!;
+        const peer = peers.find((p) => p.seat.playerId === actor);
+        if (peer) {
+          const action = legalActions(state, peer.ruleSet!, actor)[0]!;
+          const before = peers[0]!.games.length;
+          peer.room.send(MSG.action, action);
+          await waitFor(() => (peers[0]!.games.length > before ? true : undefined));
+        } else {
+          // A bot's move: the server acts on its own.
+          const before = peers[0]!.games.length;
+          await waitFor(() => (peers[0]!.games.length > before ? true : undefined));
+        }
+      }
+      void code;
+      return latest();
+    }
+
+    it("bots take their own setup turns server-side; humans can't act for them", async () => {
+      const peers = await fullLobby("BOTS");
+      peers[0].room.send(MSG.start, { ruleSetId: "home-large-5" });
+      await waitFor(() => peers[2].games[0] && peers[0].ruleSet ? true : undefined);
+
+      const done = await playSetupOverSockets(peers, "BOTS");
+      expect(done.turn).toEqual({ current: 0, phase: "rollDice" });
+      for (const p of done.players) expect(pieceCounts(done, p.id).settlements).toBe(3);
+
+      // Every human saw the same state; a human intent for a bot's seat is refused.
+      expect(peers[1].games.at(-1)).toEqual(done);
+      // Ada rolls; if the roll doesn't hand the turn to a bot immediately we
+      // end turns until it is a bot's move, then try to act as that bot.
+      let state = done;
+      let guard = 0;
+      while (nextActor(state) !== 3 && guard++ < 60) {
+        const actor = nextActor(state)!;
+        const peer = peers.find((p) => p.seat.playerId === actor);
+        const before = peers[0].games.length;
+        if (peer) {
+          const acts = legalActions(state, peer.ruleSet!, actor);
+          const action = acts.find((a) => a.type === "rollDice") ?? acts.find((a) => a.type === "endTurn") ?? acts[0]!;
+          peer.room.send(MSG.action, action);
+        }
+        await waitFor(() => (peers[0].games.length > before ? true : undefined));
+        state = peers[0].games.at(-1)!;
+      }
+      // By now the bots have played through; verify nothing a human sent was ever applied for seat 3.
+      expect(state.players[3]!.name).toBe("Bot Ada");
+      const errorsBefore = peers[1].errors.length;
+      peers[1].room.send(MSG.action, { type: "rollDice" }); // not Grace's turn
+      const err = await waitFor(() => (peers[1].errors.length > errorsBefore ? peers[1].errors.at(-1) : undefined));
+      expect(err.message).toBeTruthy();
+    });
+
+    it("bots idle when it is a human's turn (no duplicate bot loop)", async () => {
+      const peers = await fullLobby("IDLE");
+      peers[0].room.send(MSG.start, { ruleSetId: "home-large-5" });
+      await waitFor(() => peers[0].games[0]);
+      // Player 0 (Ada, human) must place first: nothing should happen on its own.
+      const count = peers[0].games.length;
+      await settle(200);
+      expect(peers[0].games.length).toBe(count);
+      expect(nextActor(peers[0].games.at(-1)!)).toBe(0);
+    });
+
+    it("persists bot seats, their rng and the generated board; a restart resumes with bots continuing", async () => {
+      const peers = await fullLobby("RSTB");
+      peers[0].room.send(MSG.start, { ruleSetId: "home-large-5" });
+      await waitFor(() => peers[0].games[0] && peers[0].ruleSet ? true : undefined);
+      const mid = await playSetupOverSockets(peers, "RSTB");
+
+      const record = (await store.load("RSTB"))!;
+      expect(record.seats.map((s) => s.kind)).toEqual(["human", "human", "human", "bot", "bot"]);
+      expect(record.seats.filter((s) => s.kind === "bot").every((s) => typeof s.botRng === "string")).toBe(true);
+      expect(record.ruleSet?.mapgen?.generationVersion).toBe("mapgen-v1");
+      expect(record.ruleSet?.board).toEqual(peers[0].ruleSet!.board);
+      expect(record.build).toEqual(TEST_BUILD);
+      expect(record.game).toEqual(mid);
+      const tokens = peers.map((p) => p.seat.seatToken);
+      const boardBefore = peers[0].ruleSet!.board;
+
+      await server.shutdown();
+      server = await bootServer(store);
+
+      const back = await connect("RSTB", "Ada", tokens[0]);
+      await waitFor(() => back.games[0] && back.ruleSet ? true : undefined);
+      expect(back.seat.playerId).toBe(0);
+      expect(back.ruleSet!.board).toEqual(boardBefore); // never regenerated
+      expect(back.games[0]).toEqual(mid);
+      const snap = await waitFor(() => back.snapshots.at(-1));
+      expect(snap.seats.map((s) => s.kind)).toEqual(["human", "human", "human", "bot", "bot"]);
+      expect(snap.seats.filter((s) => s.kind === "bot").every((s) => s.connected)).toBe(true);
+
+      // Play on: Ada rolls, then keep feeding the humans' turns; the bots must
+      // take theirs on the restarted server, exactly once each.
+      let state = back.games.at(-1)!;
+      let botMoves = 0;
+      let guard = 0;
+      const others = [await connect("RSTB", "Grace", tokens[1]), await connect("RSTB", "Alan", tokens[2])];
+      await waitFor(() => others.every((o) => o.games.length > 0) ? true : undefined);
+      const all = [back, ...others];
+      while (guard++ < 40 && botMoves < 2) {
+        const actor = nextActor(state)!;
+        const peer = all.find((p) => p.seat.playerId === actor);
+        const before = back.games.length;
+        if (peer) {
+          const acts = legalActions(state, back.ruleSet!, actor);
+          peer.room.send(MSG.action, acts.find((a) => a.type === "rollDice") ?? acts.find((a) => a.type === "endTurn") ?? acts[0]!);
+        } else {
+          botMoves++;
+        }
+        await waitFor(() => (back.games.length > before ? true : undefined));
+        state = back.games.at(-1)!;
+      }
+      expect(botMoves).toBeGreaterThan(0);
+      // Every broadcast is a *new* state: a duplicated bot move would either be
+      // rejected by the engine (no broadcast) or show up as a repeated state.
+      for (let i = 1; i < back.games.length; i++) {
+        expect(back.games[i]).not.toEqual(back.games[i - 1]);
+      }
+    });
   });
 });

@@ -5,9 +5,9 @@ import type { EdgeId, GameState, RuleSet, VertexId } from "@catan/shared";
 import { addResources, canAfford, subtractResources } from "../resources.js";
 import { legalCityVertices, legalRoadEdges, legalSettlementVertices } from "../selectors/building.js";
 import {
-  PIECE_LIMITS,
   illegal,
   pieceCounts,
+  pieceLimitsOf,
   refresh,
   requireCurrentPlayer,
   requirePhase,
@@ -40,7 +40,7 @@ export function buildRoad(
   requirePhase(state, "mainTurn");
   requireCurrentPlayer(state, playerId);
 
-  if (pieceCounts(state, playerId).roads >= PIECE_LIMITS.roads) {
+  if (pieceCounts(state, playerId).roads >= pieceLimitsOf(ruleSet).roads) {
     illegal(`player ${playerId} has no roads left`);
   }
   if (!legalRoadEdges(state, ruleSet, playerId).includes(edge)) {
@@ -59,7 +59,7 @@ export function placeFreeRoad(
   playerId: number,
   edge: EdgeId
 ): GameState {
-  if (pieceCounts(state, playerId).roads >= PIECE_LIMITS.roads) {
+  if (pieceCounts(state, playerId).roads >= pieceLimitsOf(ruleSet).roads) {
     illegal(`player ${playerId} has no roads left`);
   }
   if (!legalRoadEdges(state, ruleSet, playerId).includes(edge)) {
@@ -77,7 +77,7 @@ export function buildSettlement(
   requirePhase(state, "mainTurn");
   requireCurrentPlayer(state, playerId);
 
-  if (pieceCounts(state, playerId).settlements >= PIECE_LIMITS.settlements) {
+  if (pieceCounts(state, playerId).settlements >= pieceLimitsOf(ruleSet).settlements) {
     illegal(`player ${playerId} has no settlements left`);
   }
   const legal = legalSettlementVertices(state, ruleSet, playerId, { requireRoadConnection: true });
@@ -105,7 +105,7 @@ export function buildCity(
   requirePhase(state, "mainTurn");
   requireCurrentPlayer(state, playerId);
 
-  if (pieceCounts(state, playerId).cities >= PIECE_LIMITS.cities) {
+  if (pieceCounts(state, playerId).cities >= pieceLimitsOf(ruleSet).cities) {
     illegal(`player ${playerId} has no cities left`);
   }
   if (!legalCityVertices(state, playerId).includes(vertex)) {

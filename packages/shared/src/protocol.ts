@@ -9,8 +9,19 @@
 import type { Action, GameState, RuleSet } from "./types.js";
 
 export const ROOM_NAME = "catan";
-export const MAX_PLAYERS = 4;
+/** Seats a room can hold — 5 for "Home Large — 5 Seats"; base rules recommend at most 4. */
+export const MAX_PLAYERS = 5;
 export const MIN_PLAYERS = 2;
+
+/** Build identity, shown at startup, in the lobby, and stored with every match. */
+export interface BuildInfo {
+  appVersion: string;
+  gitCommit: string;
+  buildProfile: "dev" | "home-lan" | "production";
+  mapGenerationVersion: string;
+}
+
+export type SeatKind = "human" | "bot";
 
 /** Options a client passes when creating or joining a room. */
 export interface JoinOptions {
@@ -29,14 +40,19 @@ export const CLOSE_SUPERSEDED = 4310;
 export interface Seat {
   playerId: number;
   name: string;
+  /** Bots are always "connected" — they live in the server. */
   connected: boolean;
   isHost: boolean;
+  kind: SeatKind;
 }
 
 export interface RoomSnapshot {
   code: string;
   seats: Seat[];
   started: boolean;
+  build: BuildInfo;
+  /** Where this room's games are persisted (for the diagnostics line). */
+  persistence: string;
 }
 
 /** Payload of `start`: which rule set to play. Omitted = the default (base). */
@@ -50,6 +66,10 @@ export const MSG = {
   start: "start",
   /** A game intent. Payload: `Action`. */
   action: "action",
+  /** Host adds a server-controlled bot to the next free seat (lobby only). */
+  addBot: "addBot",
+  /** Host removes a bot seat. Payload: `{ playerId }` (lobby only). */
+  removeBot: "removeBot",
 } as const;
 
 // Server -> client

@@ -244,6 +244,14 @@ export function startGame(ruleSetId: string): void {
   room?.send(MSG.start, { ruleSetId });
 }
 
+export function addBot(): void {
+  room?.send(MSG.addBot);
+}
+
+export function removeBot(playerId: number): void {
+  room?.send(MSG.removeBot, { playerId });
+}
+
 export function sendAction(action: Action): void {
   set({ error: undefined });
   room?.send(MSG.action, action);

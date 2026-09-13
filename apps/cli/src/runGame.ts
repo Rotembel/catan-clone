@@ -4,12 +4,13 @@
 import { apply, createInitialState, createRng, totalVictoryPoints, type RngState } from "@catan/engine";
 import { createRuleSet } from "@catan/rulesets";
 import type { ActionEnvelope, GameState, RuleSet } from "@catan/shared";
-import { chooseAction } from "./bot.js";
+import { chooseAction, nextActor } from "@catan/bot";
 
 export interface RunGameOptions {
   seed?: string;
   /** Registry id; default "base". */
   ruleSetId?: string;
+  victoryPoints?: number;
   playerNames?: string[];
   /** Safety valve: a game that can't finish shouldn't hang the process. */
   maxActions?: number;
@@ -26,22 +27,14 @@ export interface GameResult {
   exhausted: boolean;
 }
 
-/** Whoever must act next: a player owing a discard, else the player to move. */
-function actorFor(state: GameState): number {
-  const pending = state.pendingDiscards ?? [];
-  if (pending.length > 0) return pending[0]!;
-  const downgrades = state.pendingDowngrades ?? [];
-  if (downgrades.length > 0) return downgrades[0]!;
-  if (state.pendingTrade?.toPlayerId !== undefined) return state.pendingTrade.toPlayerId;
-  return state.players[state.turn.current]!.id;
-}
 
 export function runGame(options: RunGameOptions = {}): GameResult {
   const seed = options.seed ?? "game-1";
   const playerNames = options.playerNames ?? ["Ada", "Grace", "Alan", "Edsger"];
+  if (playerNames.length < 2) throw new Error("a game needs at least 2 players");
   const maxActions = options.maxActions ?? 20000;
 
-  const { ruleSet, state: afterBoard } = createRuleSet(options.ruleSetId, { seed });
+  const { ruleSet, state: afterBoard } = createRuleSet(options.ruleSetId, { seed, victoryPoints: options.victoryPoints });
   let state = createInitialState(ruleSet, { playerNames, rngState: afterBoard });
 
   // The bots' own randomness, kept separate from the game's.
@@ -51,7 +44,7 @@ export function runGame(options: RunGameOptions = {}): GameResult {
   let actions = 0;
 
   while (state.winner === undefined && actions < maxActions) {
-    const playerId = actorFor(state);
+    const playerId = nextActor(state)!;
     const choice = chooseAction(state, ruleSet, playerId, botRng);
     botRng = choice.rng;
     if (!choice.action) break;

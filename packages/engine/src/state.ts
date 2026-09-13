@@ -44,6 +44,12 @@ export function normalizeState(state: GameState): GameState {
     ...state,
     commodityBank: { ...emptyCommodities(), ...(state.commodityBank ?? {}) },
     barbarianPosition: state.barbarianPosition ?? 0,
+    // Records from before setup rounds were data: setup is over unless a
+    // setup phase is literally in progress, in which case round 0/1 follows
+    // from the legacy phase name.
+    setupRound:
+      state.setupRound ??
+      (state.turn.phase.startsWith("setup") ? (state.turn.phase.endsWith("1") ? 0 : 1) : 2),
     board: { ...state.board, knights: state.board.knights ?? {} },
     players: state.players.map((p) => ({
       ...p,
@@ -87,6 +93,7 @@ export function createInitialState(ruleSet: RuleSet, options: CreateGameOptions)
     bank,
     commodityBank,
     barbarianPosition: 0,
+    setupRound: 0,
     rngState: rngAfterDeck,
   };
 }

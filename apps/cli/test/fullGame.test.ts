@@ -6,10 +6,10 @@
 import { describe, expect, it } from "vitest";
 import {
   COMMODITIES,
-  PIECE_LIMITS,
   RESOURCES,
   getGeometry,
   pieceCounts,
+  pieceLimitsOf,
   totalCards,
   totalCommodities,
   totalVictoryPoints,
@@ -52,11 +52,12 @@ function assertInvariants(
     for (const p of state.players) expect(p.commodities[c]).toBeGreaterThanOrEqual(0);
   }
 
+  const limits = pieceLimitsOf(ruleSet);
   for (const p of state.players) {
     const counts = pieceCounts(state, p.id);
-    expect(counts.roads).toBeLessThanOrEqual(PIECE_LIMITS.roads);
-    expect(counts.settlements).toBeLessThanOrEqual(PIECE_LIMITS.settlements);
-    expect(counts.cities).toBeLessThanOrEqual(PIECE_LIMITS.cities);
+    expect(counts.roads).toBeLessThanOrEqual(limits.roads);
+    expect(counts.settlements).toBeLessThanOrEqual(limits.settlements);
+    expect(counts.cities).toBeLessThanOrEqual(limits.cities);
   }
 
   // The distance rule must hold for the whole board, not just at placement.
@@ -169,5 +170,32 @@ describe("a full base game", () => {
     expect(improvementsBuilt).toBeGreaterThan(0);
     expect(knightsBuilt).toBeGreaterThan(0);
     expect(attacks).toBeGreaterThan(0);
+  });
+
+  it.each(SEEDS)("Home Large — 5 Seats: 5 players finish at 13 on the generated map (seed %s)", (seed) => {
+    const startingResources = 19 * RESOURCES.length;
+    let setupChecked = false;
+
+    const result = runGame({
+      seed,
+      ruleSetId: "home-large-5",
+      playerNames: ["Human A", "Human B", "Human C", "Bot 1", "Bot 2"],
+      maxActions: 40000,
+      onAction: (_envelope, state, ruleSet) => {
+        assertInvariants(state, ruleSet, startingResources);
+        if (!setupChecked && !state.turn.phase.startsWith("setup")) {
+          for (const p of state.players) expect(pieceCounts(state, p.id).settlements).toBe(3);
+          expect(Object.keys(state.board.roads)).toHaveLength(15);
+          setupChecked = true;
+        }
+      },
+    });
+
+    expect(result.ruleSet.board.hexes).toHaveLength(37);
+    expect(result.ruleSet.mapgen?.generationVersion).toBe("mapgen-v1");
+    expect(setupChecked).toBe(true);
+    expect(result.exhausted).toBe(false);
+    expect(result.winner).toBeDefined();
+    expect(totalVictoryPoints(result.state, result.ruleSet, result.winner!)).toBeGreaterThanOrEqual(13);
   });
 });

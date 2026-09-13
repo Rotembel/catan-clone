@@ -76,7 +76,9 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
 .home-actions { display: flex; flex-direction: column; gap: 10px; }
 .home-actions form.join { display: flex; gap: 8px; }
 .seats { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
-.seats li { padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; }
+.seats li { padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; display: flex; align-items: center; gap: 4px; }
+.seats .seat-action { margin-left: auto; }
+.diagnostics { font-size: 12px; word-break: break-all; }
 
 /* game */
 .game { display: flex; flex-direction: column; height: 100vh; }

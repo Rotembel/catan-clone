@@ -3,3 +3,5 @@ export * from "./board.js";
 export * from "./registry.js";
 export * from "./variants/friendsNight.js";
 export * from "./citiesAndKnights.js";
+export * from "./mapgen.js";
+export * from "./presets/homeLarge.js";

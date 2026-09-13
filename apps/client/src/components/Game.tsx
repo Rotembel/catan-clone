@@ -450,11 +450,12 @@ function statusText(game: GameState, ruleSet: RuleSet, me: number, mode: Mode): 
 
   switch (game.turn.phase) {
     case "setupSettlement1":
-      return mine ? "Place your first settlement." : `${who} is placing a first settlement.`;
+    case "setupSettlement2": {
+      const n = game.setupRound + 1;
+      const nth = n === 1 ? "first" : n === 2 ? "second" : n === 3 ? "third" : `${n}th`;
+      return mine ? `Place your ${nth} settlement.` : `${who} is placing a ${nth} settlement.`;
+    }
     case "setupRoad1":
-      return mine ? "Place a road next to it." : `${who} is placing a road.`;
-    case "setupSettlement2":
-      return mine ? "Place your second settlement." : `${who} is placing a second settlement.`;
     case "setupRoad2":
       return mine ? "Place a road next to it." : `${who} is placing a road.`;
     case "rollDice":

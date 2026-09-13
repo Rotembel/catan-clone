@@ -1,17 +1,19 @@
-// A deliberately simple bot — good enough to drive a full base game to
-// victory, which is Phase 1's correctness milestone, and no smarter.
+// A deliberately simple bot — good enough to drive a full game to victory,
+// and no smarter. Shared by the CLI harness and the server's live bot
+// seats (docs/planning/HOME_LAN_VERSION_WRAP.md §6-7).
 //
 // It never constructs actions itself: it picks from `legalActions`, so the
 // engine stays the only authority on what's legal. Its own randomness is a
-// separate RNG state from the game's, so games stay reproducible.
+// separate RNG state from the game's, so games stay reproducible, and it
+// is a pure function of (state, ruleSet, playerId, rng) — no clock, no I/O.
 
 import {
-  PIECE_LIMITS,
   RESOURCES,
   getGeometry,
   legalActions,
   nextInt,
   pieceCounts,
+  pieceLimitsOf,
   tradeRatiosFor,
   totalCards,
   type RngState,
@@ -74,8 +76,9 @@ function deficit(
 /** What the bot is saving up for, in priority order. */
 function currentGoal(state: GameState, ruleSet: RuleSet, playerId: number): Partial<Record<Resource, number>> {
   const counts = pieceCounts(state, playerId);
-  if (counts.settlements > 0 && counts.cities < PIECE_LIMITS.cities) return ruleSet.costs.city;
-  if (counts.settlements < PIECE_LIMITS.settlements) return ruleSet.costs.settlement;
+  const limits = pieceLimitsOf(ruleSet);
+  if (counts.settlements > 0 && counts.cities < limits.cities) return ruleSet.costs.city;
+  if (counts.settlements < limits.settlements) return ruleSet.costs.settlement;
   return ruleSet.costs.devCard;
 }
 
@@ -239,7 +242,7 @@ export function chooseAction(
   // Roads: only when they'd open somewhere to build, or chase longest road.
   const roads = ofType(options, "buildRoad");
   const settlementSpots = legalActions(state, ruleSet, playerId).filter((a) => a.type === "buildSettlement");
-  if (roads.length > 0 && settlementSpots.length === 0 && counts.roads < PIECE_LIMITS.roads) {
+  if (roads.length > 0 && settlementSpots.length === 0 && counts.roads < pieceLimitsOf(ruleSet).roads) {
     const geometry = getGeometry(ruleSet.board);
     return {
       action: bestBy(roads, (a) => {

@@ -9,10 +9,12 @@
 
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { GameState, RuleSet, Seat } from "@catan/shared";
+import type { BuildInfo, GameState, RuleSet, Seat } from "@catan/shared";
 
 export interface StoredSeat extends Seat {
   token: string;
+  /** A bot's own RNG state, threaded per decision so a restart replays identically. */
+  botRng?: string;
 }
 
 export interface GameRecord {
@@ -20,6 +22,8 @@ export interface GameRecord {
   seats: StoredSeat[];
   ruleSet?: RuleSet;
   game?: GameState;
+  /** The build that created this room. */
+  build?: BuildInfo;
   createdAt: number;
   updatedAt: number;
 }
@@ -57,6 +61,10 @@ export class MemoryStore implements GameStore {
 const SAFE_CODE = /^[A-Z0-9]{1,16}$/;
 
 export class FileStore implements GameStore {
+  private writeSeq = 0;
+  /** One write at a time per room, so overlapping saves land in order. */
+  private chains = new Map<string, Promise<void>>();
+
   constructor(private readonly dir: string) {}
 
   private pathFor(code: string): string {
@@ -64,27 +72,55 @@ export class FileStore implements GameStore {
     return join(this.dir, `${code}.json`);
   }
 
-  async load(code: string): Promise<GameRecord | undefined> {
+  private async readRecord(path: string): Promise<GameRecord | undefined> {
     try {
-      const raw = await readFile(this.pathFor(code), "utf8");
-      return JSON.parse(raw) as GameRecord;
+      return JSON.parse(await readFile(path, "utf8")) as GameRecord;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
       throw error;
     }
   }
 
+  async load(code: string): Promise<GameRecord | undefined> {
+    const path = this.pathFor(code);
+    try {
+      return await this.readRecord(path);
+    } catch (error) {
+      // A torn file must never cost the game: fall back to the previous good
+      // record, which save() keeps as .bak, and say so loudly.
+      const backup = await this.readRecord(`${path}.bak`).catch(() => undefined);
+      console.error(`room ${code}: ${path} is unreadable (${(error as Error).message}); ${backup ? "using the .bak copy" : "no .bak available"}`);
+      if (backup) return backup;
+      throw error;
+    }
+  }
+
   async save(record: GameRecord): Promise<void> {
+    const previous = this.chains.get(record.code) ?? Promise.resolve();
+    const next = previous.catch(() => undefined).then(() => this.writeNow(record));
+    this.chains.set(record.code, next);
+    try {
+      await next;
+    } finally {
+      if (this.chains.get(record.code) === next) this.chains.delete(record.code);
+    }
+  }
+
+  private async writeNow(record: GameRecord): Promise<void> {
     await mkdir(this.dir, { recursive: true });
     const path = this.pathFor(record.code);
-    // Write-then-rename so a crash mid-write can't leave a torn file.
-    const tmp = `${path}.${process.pid}.tmp`;
+    // Unique temp file per write (pid + sequence), written fully, then
+    // renamed into place atomically; the last good file survives as .bak.
+    const tmp = `${path}.${process.pid}.${this.writeSeq++}.tmp`;
     await writeFile(tmp, JSON.stringify(record), "utf8");
+    await rename(path, `${path}.bak`).catch(() => undefined);
     await rename(tmp, path);
   }
 
   async delete(code: string): Promise<void> {
-    await rm(this.pathFor(code), { force: true });
+    const path = this.pathFor(code);
+    await rm(path, { force: true });
+    await rm(`${path}.bak`, { force: true });
   }
 
   async list(): Promise<string[]> {

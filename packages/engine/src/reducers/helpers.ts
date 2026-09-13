@@ -98,3 +98,8 @@ export function pieceCounts(state: GameState, playerId: number): {
 
 /** Standard base-game piece limits. */
 export const PIECE_LIMITS = { roads: 15, settlements: 5, cities: 4 } as const;
+
+/** The limits in force for a rule set (data first, base defaults otherwise). */
+export function pieceLimitsOf(ruleSet: RuleSet): { roads: number; settlements: number; cities: number } {
+  return ruleSet.pieceLimits ?? PIECE_LIMITS;
+}

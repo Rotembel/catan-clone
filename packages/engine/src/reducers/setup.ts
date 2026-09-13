@@ -1,18 +1,59 @@
-// The opening placement phase: settlement, road, settlement, road, in
-// snake order (1..N then N..1). The second placement pays out its
-// surrounding hexes, per the official rule. With Cities & Knights on, that
-// second placement is a city (and still pays one resource per hex — no
-// commodities at setup).
+// The opening placement phase, driven by RuleSet.setup: N rounds of
+// (piece, optional road) in snake order (1..N, N..1, 1..N, ...). From
+// `grantStartingResourcesFromRound` on, a placed piece collects one resource
+// per adjacent hex. The classic game is two settlement rounds granting on
+// the second; Cities & Knights makes the second piece a city.
+//
+// Phase names stay the legacy four so nothing downstream changes for the
+// base game: round 0 is "setupSettlement1"/"setupRoad1", every later round
+// "setupSettlement2"/"setupRoad2"; `state.setupRound` says which.
 
-import type { EdgeId, GameState, Resource, RuleSet, VertexId } from "@catan/shared";
+import type { EdgeId, GameState, Resource, RuleSet, SetupRules, TurnPhase, VertexId } from "@catan/shared";
 import { getGeometry } from "../geometryCache.js";
 import { addResources, subtractResources } from "../resources.js";
-import {
-  isVertexFree,
-  legalSetupRoadEdges,
-  satisfiesDistanceRule,
-} from "../selectors/building.js";
+import { isVertexFree, legalSetupRoadEdges, satisfiesDistanceRule } from "../selectors/building.js";
 import { illegal, refresh, requireCurrentPlayer, requirePhase, updatePlayer } from "./helpers.js";
+
+/** The setup rules in force: explicit, or derived from the classic defaults and the C&K flag. */
+export function setupRulesOf(ruleSet: RuleSet): SetupRules {
+  if (ruleSet.setup) return ruleSet.setup;
+  const second = ruleSet.citiesAndKnights?.setupSecondPlacementIsCity ? "city" : "settlement";
+  return {
+    sequence: "snake",
+    rounds: [
+      { piece: "settlement", road: true },
+      { piece: second, road: true },
+    ],
+    grantStartingResourcesFromRound: 2,
+  };
+}
+
+function placementPhase(round: number): TurnPhase {
+  return round === 0 ? "setupSettlement1" : "setupSettlement2";
+}
+function roadPhase(round: number): TurnPhase {
+  return round === 0 ? "setupRoad1" : "setupRoad2";
+}
+
+/** Snake order: even rounds run 0..N-1, odd rounds N-1..0. */
+function advanceSetup(state: GameState, rules: SetupRules): GameState {
+  const n = state.players.length;
+  const round = state.setupRound;
+  const forward = round % 2 === 0;
+  let current = state.turn.current;
+  let nextRound = round;
+
+  if (forward) {
+    if (current < n - 1) current++;
+    else nextRound++;
+  } else if (current > 0) current--;
+  else nextRound++;
+
+  if (nextRound >= rules.rounds.length) {
+    return { ...state, setupRound: nextRound, turn: { current: 0, phase: "rollDice" } };
+  }
+  return { ...state, setupRound: nextRound, turn: { current, phase: placementPhase(nextRound) } };
+}
 
 export function placeSetupSettlement(
   state: GameState,
@@ -22,6 +63,10 @@ export function placeSetupSettlement(
 ): GameState {
   requirePhase(state, "setupSettlement1", "setupSettlement2");
   requireCurrentPlayer(state, playerId);
+  const rules = setupRulesOf(ruleSet);
+  const round = state.setupRound;
+  const roundRules = rules.rounds[round];
+  if (!roundRules) illegal(`no setup round ${round}`);
 
   const geometry = getGeometry(ruleSet.board);
   if (!geometry.vertexHexes.has(vertex)) illegal(`no such vertex on this board: ${vertex}`);
@@ -30,33 +75,31 @@ export function placeSetupSettlement(
     illegal(`vertex ${vertex} violates the distance rule`);
   }
 
-  const isSecond = state.turn.phase === "setupSettlement2";
-  const kind =
-    isSecond && ruleSet.citiesAndKnights?.setupSecondPlacementIsCity ? "city" : "settlement";
-
   let next: GameState = {
     ...state,
     board: {
       ...state.board,
-      buildings: { ...state.board.buildings, [vertex]: { playerId, kind } },
+      buildings: { ...state.board.buildings, [vertex]: { playerId, kind: roundRules.piece } },
     },
     setupLastSettlement: vertex,
-    turn: { ...state.turn, phase: isSecond ? "setupRoad2" : "setupRoad1" },
   };
 
-  if (isSecond) {
-    // The second settlement collects one resource from each adjacent hex.
+  if (round + 1 >= rules.grantStartingResourcesFromRound) {
+    // Collect one resource from each adjacent hex (never a commodity).
     const gain: Partial<Record<Resource, number>> = {};
     for (const hexId of geometry.vertexHexes.get(vertex) ?? []) {
       const hex = ruleSet.board.hexes.find((h) => h.id === hexId);
       if (!hex || hex.resource === "desert") continue;
-      if (next.bank[hex.resource] <= 0) continue;
+      if (next.bank[hex.resource] <= (gain[hex.resource] ?? 0)) continue;
       gain[hex.resource] = (gain[hex.resource] ?? 0) + 1;
     }
     next = { ...next, bank: subtractResources(next.bank, gain) };
     next = updatePlayer(next, playerId, (p) => ({ ...p, resources: addResources(p.resources, gain) }));
   }
 
+  next = roundRules.road
+    ? { ...next, turn: { ...next.turn, phase: roadPhase(round) } }
+    : advanceSetup({ ...next, setupLastSettlement: undefined }, rules);
   return refresh(next, ruleSet);
 }
 
@@ -75,34 +118,10 @@ export function placeSetupRoad(
     illegal(`road ${edge} must connect to the settlement just placed`);
   }
 
-  const playerCount = state.players.length;
-  const isFirstRound = state.turn.phase === "setupRoad1";
-
-  let nextCurrent = state.turn.current;
-  let nextPhase: GameState["turn"]["phase"];
-  if (isFirstRound) {
-    if (state.turn.current < playerCount - 1) {
-      nextCurrent = state.turn.current + 1;
-      nextPhase = "setupSettlement1";
-    } else {
-      // Last player places both of their settlements back to back.
-      nextPhase = "setupSettlement2";
-    }
-  } else if (state.turn.current > 0) {
-    nextCurrent = state.turn.current - 1;
-    nextPhase = "setupSettlement2";
-  } else {
-    // Setup complete — back to the first player for the first real turn.
-    nextCurrent = 0;
-    nextPhase = "rollDice";
-  }
-
   const next: GameState = {
     ...state,
     board: { ...state.board, roads: { ...state.board.roads, [edge]: playerId } },
     setupLastSettlement: undefined,
-    turn: { current: nextCurrent, phase: nextPhase },
   };
-
-  return refresh(next, ruleSet);
+  return refresh(advanceSetup(next, setupRulesOf(ruleSet)), ruleSet);
 }

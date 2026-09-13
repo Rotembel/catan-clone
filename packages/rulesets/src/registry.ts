@@ -6,13 +6,20 @@ import type { RngState } from "@catan/engine";
 import { createBaseRuleSet, type BaseRuleSetOptions } from "./base.js";
 import { FRIENDS_NIGHT_ID, createFriendsNightRuleSet } from "./variants/friendsNight.js";
 import { CITIES_AND_KNIGHTS_ID, createCitiesAndKnightsRuleSet } from "./citiesAndKnights.js";
+import { HOME_LARGE_ID, createHomeLargeRuleSet } from "./presets/homeLarge.js";
+
+export interface RuleSetOptions extends BaseRuleSetOptions {
+  victoryPoints?: number;
+}
 
 export interface RuleSetInfo {
   id: string;
   label: string;
   /** One line for the lobby. */
   description: string;
-  create: (options?: BaseRuleSetOptions) => { ruleSet: RuleSet; state: RngState };
+  /** Seats this rule set is designed for. */
+  seats: { min: number; max: number };
+  create: (options?: RuleSetOptions) => { ruleSet: RuleSet; state: RngState };
 }
 
 export const RULE_SETS: readonly RuleSetInfo[] = [
@@ -20,18 +27,28 @@ export const RULE_SETS: readonly RuleSetInfo[] = [
     id: "base",
     label: "Base game",
     description: "The standard rules.",
+    seats: { min: 2, max: 4 },
     create: createBaseRuleSet,
   },
   {
     id: FRIENDS_NIGHT_ID,
     label: "Friends' night",
     description: "Base game, plus development cards can be traded between players.",
+    seats: { min: 2, max: 4 },
     create: createFriendsNightRuleSet,
+  },
+  {
+    id: HOME_LARGE_ID,
+    label: "Home Large — 5 Seats",
+    description: "Base rules on a generated 37-hex map, three opening placements each, 13 points to win. Built for 3 humans + 2 bots.",
+    seats: { min: 3, max: 5 },
+    create: createHomeLargeRuleSet,
   },
   {
     id: CITIES_AND_KNIGHTS_ID,
     label: "Cities & Knights (in progress)",
     description: "Commodities, city improvements, the event die, barbarians and knights; second placement is a city; 13 points to win. Progress cards, metropolises and walls are coming.",
+    seats: { min: 2, max: 4 },
     create: createCitiesAndKnightsRuleSet,
   },
 ];
@@ -44,7 +61,7 @@ export function ruleSetInfo(id: string): RuleSetInfo | undefined {
 
 export function createRuleSet(
   id: string = DEFAULT_RULE_SET_ID,
-  options: BaseRuleSetOptions = {}
+  options: RuleSetOptions = {}
 ): { ruleSet: RuleSet; state: RngState } {
   const info = ruleSetInfo(id);
   if (!info) throw new Error(`unknown rule set: ${id}`);

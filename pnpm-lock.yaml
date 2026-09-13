@@ -17,6 +17,9 @@ importers:
 
   apps/cli:
     dependencies:
+      '@catan/bot':
+        specifier: workspace:*
+        version: link:../../packages/bot
       '@catan/engine':
         specifier: workspace:*
         version: link:../../packages/engine
@@ -76,6 +79,9 @@ importers:
 
   apps/server:
     dependencies:
+      '@catan/bot':
+        specifier: workspace:*
+        version: link:../../packages/bot
       '@catan/engine':
         specifier: workspace:*
         version: link:../../packages/engine
@@ -110,6 +116,19 @@ importers:
       vite-node:
         specifier: ^2.1.4
         version: 2.1.9(@types/node@22.20.2)
+      vitest:
+        specifier: ^2.1.4
+        version: 2.1.9(@types/node@22.20.2)
+
+  packages/bot:
+    dependencies:
+      '@catan/engine':
+        specifier: workspace:*
+        version: link:../engine
+      '@catan/shared':
+        specifier: workspace:*
+        version: link:../shared
+    devDependencies:
       vitest:
         specifier: ^2.1.4
         version: 2.1.9(@types/node@22.20.2)

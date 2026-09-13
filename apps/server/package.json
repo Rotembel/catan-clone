@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@catan/bot": "workspace:*",
     "@catan/engine": "workspace:*",
     "@catan/rulesets": "workspace:*",
     "@catan/shared": "workspace:*",

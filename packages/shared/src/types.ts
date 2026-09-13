@@ -108,9 +108,48 @@ export interface CitiesAndKnightsRules {
   fortressLevel: number;
 }
 
+/** One opening-placement round: a piece, optionally followed by a road. */
+export interface SetupRound {
+  piece: "settlement" | "city";
+  road: boolean;
+}
+
+/**
+ * Opening placement as data. Rounds run in snake order (1..N, N..1, 1..N,
+ * ...). From `grantStartingResourcesFromRound` (1-based) onward, a placed
+ * piece collects one resource from each adjacent hex. Absent = the classic
+ * two rounds (and Cities & Knights' city-as-second-placement flag).
+ */
+export interface SetupRules {
+  sequence: "snake";
+  rounds: SetupRound[];
+  grantStartingResourcesFromRound: number;
+}
+
+/** Pieces each player has. Absent = the base game's 15 / 5 / 4. */
+export interface PieceLimits {
+  roads: number;
+  settlements: number;
+  cities: number;
+}
+
+/** How a generated board came to be — enough to reproduce it exactly. */
+export interface MapGenInfo {
+  seed: string;
+  generationVersion: string;
+  candidateIndex: number;
+  score: number;
+}
+
 export interface RuleSet {
   id: string;
   victoryPoints: number;
+  /** Seats this rule set is meant for; the lobby caps at the protocol's MAX_PLAYERS regardless. */
+  maxPlayers?: number;
+  setup?: SetupRules;
+  pieceLimits?: PieceLimits;
+  /** Present when the board was procedurally generated (the layout itself is in `board`). */
+  mapgen?: MapGenInfo;
   costs: Record<BuildKind, Partial<Record<Resource, number>>>;
   devCards: DevCardDef[];
   board: BoardLayout;
@@ -225,6 +264,8 @@ export interface GameState {
   largestArmyPlayerId?: number;
   /** During setup, the settlement just placed — the road must connect to it. */
   setupLastSettlement?: VertexId;
+  /** Which opening-placement round (0-based) is in progress; equals the round count once setup is over. */
+  setupRound: number;
   winner?: number;
   /** Serialized seeded RNG — keeps the engine pure (see CLAUDE.md). */
   rngState: string;

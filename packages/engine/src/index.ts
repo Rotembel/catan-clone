@@ -11,7 +11,8 @@ export * from "./selectors/victory.js";
 export * from "./selectors/production.js";
 export * from "./selectors/legalActions.js";
 
-export { PIECE_LIMITS, pieceCounts, IllegalActionError } from "./reducers/helpers.js";
+export { PIECE_LIMITS, pieceCounts, pieceLimitsOf, IllegalActionError } from "./reducers/helpers.js";
+export { setupRulesOf } from "./reducers/setup.js";
 export { DISCARD_THRESHOLD, discardCountFor } from "./reducers/dice.js";
 export { stealTargetsAt } from "./reducers/robber.js";
 export { buildImprovement, canBuildImprovement, maxImprovementLevel, nextImprovementCost } from "./reducers/improve.js";

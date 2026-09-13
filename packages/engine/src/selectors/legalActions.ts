@@ -9,7 +9,7 @@
 
 import type { Action, Card, CardCounts, GameState, RuleSet } from "@catan/shared";
 import { discardCountFor } from "../reducers/dice.js";
-import { PIECE_LIMITS, pieceCounts } from "../reducers/helpers.js";
+import { pieceCounts, pieceLimitsOf } from "../reducers/helpers.js";
 import { canBuildImprovement } from "../reducers/improve.js";
 import { cityVertices } from "../reducers/barbarians.js";
 import { knightCounts, knightReachableVertices, legalKnightVertices } from "../reducers/knights.js";
@@ -151,15 +151,16 @@ export function legalActions(state: GameState, ruleSet: RuleSet, playerId: numbe
       actions.push({ type: "endTurn" });
 
       const counts = pieceCounts(state, playerId);
+      const limits = pieceLimitsOf(ruleSet);
 
-      if (canAfford(player.resources, ruleSet.costs.road) && counts.roads < PIECE_LIMITS.roads) {
+      if (canAfford(player.resources, ruleSet.costs.road) && counts.roads < limits.roads) {
         for (const edge of legalRoadEdges(state, ruleSet, playerId)) {
           actions.push({ type: "buildRoad", edge });
         }
       }
       if (
         canAfford(player.resources, ruleSet.costs.settlement) &&
-        counts.settlements < PIECE_LIMITS.settlements
+        counts.settlements < limits.settlements
       ) {
         for (const vertex of legalSettlementVertices(state, ruleSet, playerId, {
           requireRoadConnection: true,
@@ -167,7 +168,7 @@ export function legalActions(state: GameState, ruleSet: RuleSet, playerId: numbe
           actions.push({ type: "buildSettlement", vertex });
         }
       }
-      if (canAfford(player.resources, ruleSet.costs.city) && counts.cities < PIECE_LIMITS.cities) {
+      if (canAfford(player.resources, ruleSet.costs.city) && counts.cities < limits.cities) {
         for (const vertex of legalCityVertices(state, playerId)) {
           actions.push({ type: "buildCity", vertex });
         }
@@ -219,7 +220,7 @@ export function legalActions(state: GameState, ruleSet: RuleSet, playerId: numbe
 
         if (playable("roadBuilding") > 0) {
           const edges = legalRoadEdges(state, ruleSet, playerId);
-          const room = PIECE_LIMITS.roads - counts.roads;
+          const room = limits.roads - counts.roads;
           if (edges.length >= 2 && room >= 2) {
             actions.push({
               type: "playDevCard",

@@ -1,11 +1,12 @@
 {
   "name": "catan",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.6.0-home.1",
   "description": "Stable, real-time online Catan replacement — see SPEC.md",
   "scripts": {
     "test": "pnpm -r --if-present run test",
-    "typecheck": "pnpm -r --if-present run typecheck"
+    "typecheck": "pnpm -r --if-present run typecheck",
+    "home": "node scripts/home.mjs"
   },
   "devDependencies": {
     "typescript": "^5.6.3",
