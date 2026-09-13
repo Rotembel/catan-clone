@@ -33,6 +33,7 @@ import { ruleSetInfo } from "@catan/rulesets";
 import { clearError, leaveRoom, sendAction, type NetState } from "../net.js";
 import { Board, type BoardTargets } from "./Board.js";
 import { PLAYER_COLORS } from "./colors.js";
+import { edgeTapAction, vertexTapAction } from "./tapDispatch.js";
 
 const RESOURCE_ICON: Record<Resource, string> = {
   wood: "🌲",
@@ -271,39 +272,14 @@ export function Game({ net, game, ruleSet, me }: Props) {
     if (mode.kind === "idle" && actableKnights.has(v)) setMode({ kind: "knightMenu", vertex: v });
   };
 
+  // Board taps commit immediately (one-tap targets, no confirm step). Legality
+  // is re-read from the current legal list on every tap — see tapDispatch.ts.
   const onVertex = (v: VertexId) => {
-    if (mode.kind === "buildKnight") {
-      if (mode.vertices.has(v)) sendAction({ type: "buildKnight", vertex: v });
-      return;
-    }
-    if (mode.kind === "moveKnight") {
-      if (mode.targets.has(v)) sendAction({ type: "moveKnight", from: mode.from, to: v });
-      return;
-    }
-    if (mode.kind === "respondVertex") {
-      if (mode.vertices.has(v)) sendAction({ type: "respondInteraction", payload: { vertex: v } });
-      return;
-    }
-    if (mode.kind === "progressVertex") {
-      if (mode.vertices.has(v)) sendAction({ type: "playProgressCard", cardId: mode.cardId, payload: { vertex: v } });
-      return;
-    }
-    if (metropolisVertexSet.has(v)) sendAction({ type: "placeMetropolis", vertex: v });
-    else if (downgradeVertices.has(v)) sendAction({ type: "downgradeCity", vertex: v });
-    else if (wallVertices.has(v)) sendAction({ type: "buildWall", vertex: v });
-    else if (cityVertices.has(v)) sendAction({ type: "buildCity", vertex: v });
-    else if (settlementVertices.has(v)) sendAction({ type: "buildSettlement", vertex: v });
+    const action = vertexTapAction(mode, legal, v);
+    if (action) sendAction(action);
   };
 
   const onEdge = (e: EdgeId) => {
-    if (mode.kind === "progressEdge") {
-      if (mode.edges.has(e)) sendAction({ type: "playProgressCard", cardId: mode.cardId, payload: { edge: e } });
-      return;
-    }
-    if (mode.kind === "respondEdge") {
-      if (mode.edges.has(e)) sendAction({ type: "respondInteraction", payload: { edge: e } });
-      return;
-    }
     if (mode.kind === "roadBuilding") {
       if (mode.edges.includes(e)) {
         setMode({ kind: "roadBuilding", edges: mode.edges.filter((x) => x !== e) });
@@ -317,7 +293,8 @@ export function Game({ net, game, ruleSet, me }: Props) {
       }
       return;
     }
-    if (roadEdges.has(e)) sendAction({ type: "buildRoad", edge: e });
+    const action = edgeTapAction(mode, legal, e);
+    if (action) sendAction(action);
   };
 
   const moveRobberTo = (hex: HexId, victims: number[], viaKnight: boolean) => {

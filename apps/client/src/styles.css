@@ -112,14 +112,21 @@ label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
 
 /* board targets */
 .clickable { cursor: pointer; }
+/* Touch: no double-tap zoom / tap delay on the board; hover-only feedback is
+   restricted to real pointers — on iOS the first tap otherwise just applies
+   :hover (looks "selected") and the click never comes. */
+.board { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+.target-hit { fill: transparent; stroke: none; }
 .target-hex { fill: #fff3; stroke: #fff; stroke-width: 3; }
-.hex.clickable:hover .target-hex { fill: #fff6; }
 .target-vertex { fill: #ffffffaa; stroke: var(--ink); stroke-width: 2; }
-.target-vertex:hover { fill: #fff; }
 .target-edge { stroke: #ffffffaa; }
 .target-edge.selected { stroke: #ffd166; }
-.clickable:hover .target-edge { stroke: #fff; }
 .target-dot { fill: var(--ink); pointer-events: none; }
+@media (hover: hover) {
+  .hex.clickable:hover .target-hex { fill: #fff6; }
+  .clickable:hover .target-vertex { fill: #fff; }
+  .clickable:hover .target-edge { stroke: #fff; }
+}
 
 /* modals */
 .modal-backdrop { position: fixed; inset: 0; background: #0006; display: grid; place-items: center; z-index: 10; }

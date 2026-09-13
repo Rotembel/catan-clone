@@ -309,15 +309,13 @@ export function Board({ game, ruleSet, targets, onVertex, onEdge, onHex, onKnigh
       {/* vertex targets */}
       {scene.vertices.map(({ id, p }) => {
         if (!targets.vertices.has(id)) return null;
+        // A finger-sized invisible hit area around the visible circle: the
+        // visible disc alone is ~12px on a tablet, too small to tap reliably.
         return (
-          <circle
-            key={`t-${id}`}
-            cx={p.x}
-            cy={p.y}
-            r={HEX * 0.22}
-            className="target-vertex clickable"
-            onClick={() => onVertex(id)}
-          />
+          <g key={`t-${id}`} className="clickable" onClick={() => onVertex(id)}>
+            <circle cx={p.x} cy={p.y} r={HEX * 0.42} className="target-hit" />
+            <circle cx={p.x} cy={p.y} r={HEX * 0.22} className="target-vertex" />
+          </g>
         );
       })}
     </svg>
