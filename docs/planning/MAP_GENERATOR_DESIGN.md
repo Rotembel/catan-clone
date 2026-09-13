@@ -18,9 +18,11 @@ Current integration note: Phase 5 / Cities & Knights is in progress; this docume
 > - Persistence already stores the whole `RuleSet` (including `board`) in the room
 >   record after every action, so a generated layout is already persisted rather than
 >   regenerated on reconnect/restart. `generationVersion`/`seed` metadata is new.
-> - Setup rules: the engine currently has one data flag for this,
->   `RuleSet.citiesAndKnights.setupSecondPlacementIsCity` (slice 1). The `SetupRules`
->   shape in §6 would subsume it.
+> - Setup rules: implemented in HOME STABLE v0.1 as `RuleSet.setup: SetupRules`
+>   with `rounds` and **`startingResourcesRound`** (1-based; exactly one round pays,
+>   not "from this round onward" as §6's `grantStartingResourcesFromRound` suggests —
+>   the owner chose "second settlement pays" for the 3-round preset after the first
+>   real game).
 
 ## 1. Goal
 

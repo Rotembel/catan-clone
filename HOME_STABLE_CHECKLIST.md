@@ -27,7 +27,8 @@ tablets, other laptops on the **same Wi-Fi**.
      `http://192.168.x.x:5173` (fallback). If it says a port is in use, follow the message.
    - macOS may ask whether to allow incoming connections for `node` — click **Allow**.
 3. On **two other physical devices**, open the **`.local`** address; if a device can't
-   resolve it (some Android phones), use the IP address instead.
+   resolve it (some Android phones), use the IP address instead. (Either works now; the
+   `.local` 403 seen on the first night was Vite's host guard and is fixed.)
    - Why it matters: each phone keeps its seat token *per address*. If the laptop's IP
      changes mid-evening, phones that used the IP lose their seat; phones on the
      `.local` name don't.
@@ -38,10 +39,14 @@ tablets, other laptops on the **same Wi-Fi**.
 6. Host: **Add bot** twice → 3 humans + 2 bots. Pick **Home Large — 5 Seats**.
    The diagnostics line at the bottom shows `v0.6.0-home.1 · <commit> · home-lan · mapgen-v1`.
 7. **Start game**. Complete the **three** placement rounds (bots place on their own,
-   with a short pause each).
+   with a short pause each). After each player's **second** settlement they receive one
+   card per adjacent producing hex; the first and third pay nothing.
 8. Play **at least five full rounds** (every seat rolls at least once, bots included).
    Do at least one bank trade and one player trade.
 9. **Refresh** one human's browser → it comes back in the same seat with the same board.
+   - If a phone lost the page entirely (app killed, fresh tab): open the same address →
+     the home screen shows **Resume room CODE as Name** — tap it. Typing the code into
+     Join also rejoins the same seat; the name typed there is display only.
 10. **Turn Wi-Fi off and on** on one phone (10–20 s) → "reconnecting…" then back, same seat.
     - While it says "Can't reach the server — retrying…", **do not tap "Give up and start
       over"**: that button deletes the phone's seat token and the seat can't be reclaimed.

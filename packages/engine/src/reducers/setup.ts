@@ -1,8 +1,9 @@
 // The opening placement phase, driven by RuleSet.setup: N rounds of
-// (piece, optional road) in snake order (1..N, N..1, 1..N, ...). From
-// `grantStartingResourcesFromRound` on, a placed piece collects one resource
-// per adjacent hex. The classic game is two settlement rounds granting on
-// the second; Cities & Knights makes the second piece a city.
+// (piece, optional road) in snake order (1..N, N..1, 1..N, ...). Exactly
+// one round — `startingResourcesRound` — pays: that piece collects one
+// resource per adjacent producing hex. The classic game is two settlement
+// rounds paying on the second; Cities & Knights makes the second piece a
+// city; Home Large has three rounds and still pays on the second.
 //
 // Phase names stay the legacy four so nothing downstream changes for the
 // base game: round 0 is "setupSettlement1"/"setupRoad1", every later round
@@ -24,7 +25,7 @@ export function setupRulesOf(ruleSet: RuleSet): SetupRules {
       { piece: "settlement", road: true },
       { piece: second, road: true },
     ],
-    grantStartingResourcesFromRound: 2,
+    startingResourcesRound: 2,
   };
 }
 
@@ -84,8 +85,8 @@ export function placeSetupSettlement(
     setupLastSettlement: vertex,
   };
 
-  if (round + 1 >= rules.grantStartingResourcesFromRound) {
-    // Collect one resource from each adjacent hex (never a commodity).
+  if (round + 1 === rules.startingResourcesRound) {
+    // Collect one resource from each adjacent producing hex (never a commodity).
     const gain: Partial<Record<Resource, number>> = {};
     for (const hexId of geometry.vertexHexes.get(vertex) ?? []) {
       const hex = ruleSet.board.hexes.find((h) => h.id === hexId);

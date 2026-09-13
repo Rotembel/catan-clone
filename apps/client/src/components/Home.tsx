@@ -1,10 +1,11 @@
 import { useState, type FormEvent } from "react";
-import { createRoom, joinRoom, type NetState } from "../net.js";
+import { createRoom, forgetSession, joinRoom, resumeSession, storedSessions, type NetState } from "../net.js";
 
 export function Home({ net }: { net: NetState }) {
   const [name, setName] = useState(net.name || "");
   const [code, setCode] = useState("");
   const busy = net.screen === "connecting";
+  const sessions = storedSessions();
 
   const onCreate = (e: FormEvent) => {
     e.preventDefault();
@@ -21,6 +22,22 @@ export function Home({ net }: { net: NetState }) {
     <div className="home">
       <h1>Settlers</h1>
       <p className="muted">Create a room and share the code, or join a friend's.</p>
+
+      {sessions.length > 0 && (
+        <div className="resume" data-testid="resume">
+          <p className="muted">You have a seat in:</p>
+          {sessions.map((s) => (
+            <div key={s.code} className="row">
+              <button className="primary" disabled={busy} onClick={() => void resumeSession(s.code)}>
+                Resume room {s.code} as {s.name}
+              </button>
+              <button className="small" disabled={busy} onClick={() => forgetSession(s.code)} title="Forget this seat">
+                Forget
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       <label>
         Your name

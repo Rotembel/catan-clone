@@ -5,6 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { apply } from "../src/apply.js";
 import { setupRulesOf } from "../src/reducers/setup.js";
+import { getGeometry } from "../src/geometryCache.js";
 import { totalCards } from "../src/resources.js";
 import { legalActions } from "../src/selectors/legalActions.js";
 import { newGame, playSetup, testRuleSet } from "./fixtures.js";
@@ -20,7 +21,7 @@ const threeRounds = (): RuleSet => ({
       { piece: "settlement", road: true },
       { piece: "settlement", road: true },
     ],
-    grantStartingResourcesFromRound: 3,
+    startingResourcesRound: 2,
   },
 });
 
@@ -58,21 +59,93 @@ describe("three-round setup", () => {
     expect(Object.keys(state.board.roads)).toHaveLength(9);
   });
 
-  it("grants starting resources only from the configured round", () => {
+  /** Producing hexes around a vertex (deserts excluded). */
+  const producingCount = (ruleSet: RuleSet, vertex: string): number =>
+    (getGeometry(ruleSet.board).vertexHexes.get(vertex) ?? []).filter(
+      (h) => ruleSet.board.hexes.find((x) => x.id === h)!.resource !== "desert"
+    ).length;
+
+  /** First legal action, except settlements go on the most productive legal vertex. */
+  const bestAction = (state: GameState, ruleSet: RuleSet, playerId: number) => {
+    const options = legalActions(state, ruleSet, playerId);
+    const settlements = options.filter((a): a is Extract<typeof a, { type: "buildSettlement" }> => a.type === "buildSettlement");
+    if (settlements.length === 0) return options[0]!;
+    return settlements.reduce((best, a) => (producingCount(ruleSet, a.vertex) > producingCount(ruleSet, best.vertex) ? a : best));
+  };
+
+  it("pays starting resources exactly once, on round 2, and nothing on round 3", () => {
     const ruleSet = threeRounds();
     let state = newGame(ruleSet, ["A", "B"]);
     const step = () => {
       const playerId = state.players[state.turn.current]!.id;
-      state = apply(state, { playerId, action: legalActions(state, ruleSet, playerId)[0]! }, ruleSet);
+      state = apply(state, { playerId, action: bestAction(state, ruleSet, playerId) }, ruleSet);
     };
-    // Rounds 1 and 2: 2 players × (settlement + road) × 2 rounds = 8 actions, no cards.
-    for (let i = 0; i < 8; i++) step();
-    expect(state.setupRound).toBe(2);
+    // Round 1: 2 players × (settlement + road) — nothing yet.
+    for (let i = 0; i < 4; i++) step();
+    expect(state.setupRound).toBe(1);
     expect(state.players.every((p) => totalCards(p.resources) === 0)).toBe(true);
-    // Round 3 grants.
-    step(); // player 0's third settlement
-    expect(totalCards(state.players[0]!.resources)).toBeGreaterThan(0);
-    expect(totalCards(state.players[1]!.resources)).toBe(0);
+    // Round 2 (backwards): B places → B has cards, A still none; then A.
+    step();
+    expect(totalCards(state.players[1]!.resources)).toBeGreaterThan(0);
+    expect(totalCards(state.players[0]!.resources)).toBe(0);
+    step(); step(); step();
+    const afterRound2 = state.players.map((p) => ({ ...p.resources }));
+    expect(afterRound2.every((r) => totalCards(r) > 0)).toBe(true);
+    // Round 3: four more placements, hands unchanged.
+    for (let i = 0; i < 4; i++) step();
+    expect(state.turn.phase).toBe("rollDice");
+    expect(state.players.map((p) => p.resources)).toEqual(afterRound2);
+  });
+
+  it("the grant is exactly one card per adjacent producing hex, deserts give nothing, and the bank balances", () => {
+    const ruleSet = threeRounds();
+    const geometry = getGeometry(ruleSet.board);
+    const desert = ruleSet.board.hexes.find((h) => h.resource === "desert")!;
+    const bankBefore = 19 * 5;
+    let state = newGame(ruleSet, ["A", "B"]);
+
+    const producingAround = (vertex: string): Record<string, number> => {
+      const out: Record<string, number> = {};
+      for (const hexId of geometry.vertexHexes.get(vertex) ?? []) {
+        const hex = ruleSet.board.hexes.find((h) => h.id === hexId)!;
+        if (hex.resource === "desert") continue;
+        out[hex.resource] = (out[hex.resource] ?? 0) + 1;
+      }
+      return out;
+    };
+
+    // Drive setup with productive picks, except that in round 2 player A
+    // deliberately takes a vertex touching the desert (the most productive
+    // such vertex), so the desert's non-contribution is exercised.
+    let aRound2Vertex: string | undefined;
+    let guard = 0;
+    while (state.turn.phase.startsWith("setup") && guard++ < 50) {
+      const playerId = state.players[state.turn.current]!.id;
+      let action = bestAction(state, ruleSet, playerId);
+      if (playerId === 0 && state.setupRound === 1 && action.type === "buildSettlement") {
+        const desertSpots = legalActions(state, ruleSet, playerId).filter(
+          (a): a is Extract<typeof a, { type: "buildSettlement" }> =>
+            a.type === "buildSettlement" && (geometry.vertexHexes.get(a.vertex) ?? []).includes(desert.id)
+        );
+        expect(desertSpots.length).toBeGreaterThan(0);
+        action = desertSpots.reduce((best, a) => (producingCount(ruleSet, a.vertex) > producingCount(ruleSet, best.vertex) ? a : best));
+        aRound2Vertex = action.vertex;
+      }
+      state = apply(state, { playerId, action }, ruleSet);
+    }
+    expect(aRound2Vertex).toBeDefined();
+    const expected = producingAround(aRound2Vertex!);
+    const actual = Object.fromEntries(
+      Object.entries(state.players[0]!.resources).filter(([, n]) => n > 0)
+    );
+    expect(actual).toEqual(expected);
+    // The desert really was adjacent and really paid nothing.
+    expect((geometry.vertexHexes.get(aRound2Vertex!) ?? []).includes(desert.id)).toBe(true);
+    expect(totalCards(state.players[0]!.resources)).toBe((geometry.vertexHexes.get(aRound2Vertex!) ?? []).length - 1);
+
+    // Conservation: every card that left the bank is in a hand.
+    const inHands = state.players.reduce((n, p) => n + totalCards(p.resources), 0);
+    expect(totalCards(state.bank) + inHands).toBe(bankBefore);
   });
 
   it("uses the legacy phase names, so clients and bots need no new phase", () => {
@@ -90,7 +163,7 @@ describe("three-round setup", () => {
   });
 
   it("a round without a road advances straight to the next placement", () => {
-    const ruleSet: RuleSet = { ...threeRounds(), setup: { sequence: "snake", rounds: [{ piece: "settlement", road: false }, { piece: "settlement", road: true }], grantStartingResourcesFromRound: 2 } };
+    const ruleSet: RuleSet = { ...threeRounds(), setup: { sequence: "snake", rounds: [{ piece: "settlement", road: false }, { piece: "settlement", road: true }], startingResourcesRound: 2 } };
     let state = newGame(ruleSet, ["A", "B"]);
     const p0 = legalActions(state, ruleSet, 0)[0]!;
     state = apply(state, { playerId: 0, action: p0 }, ruleSet);
@@ -106,7 +179,7 @@ describe("derived setup rules (no RuleSet.setup)", () => {
     expect(setupRulesOf(ruleSet)).toEqual({
       sequence: "snake",
       rounds: [{ piece: "settlement", road: true }, { piece: "settlement", road: true }],
-      grantStartingResourcesFromRound: 2,
+      startingResourcesRound: 2,
     });
     const { state, placers } = trace(ruleSet, ["A", "B", "C"]);
     expect(placers).toEqual([0, 1, 2, 2, 1, 0]);

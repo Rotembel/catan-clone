@@ -116,14 +116,16 @@ export interface SetupRound {
 
 /**
  * Opening placement as data. Rounds run in snake order (1..N, N..1, 1..N,
- * ...). From `grantStartingResourcesFromRound` (1-based) onward, a placed
- * piece collects one resource from each adjacent hex. Absent = the classic
- * two rounds (and Cities & Knights' city-as-second-placement flag).
+ * ...). Exactly one round pays starting resources: the piece placed in
+ * round `startingResourcesRound` (1-based) collects one resource from each
+ * adjacent producing hex; no other round grants anything. Absent = the
+ * classic two rounds, paying on the second (and Cities & Knights'
+ * city-as-second-placement flag).
  */
 export interface SetupRules {
   sequence: "snake";
   rounds: SetupRound[];
-  grantStartingResourcesFromRound: number;
+  startingResourcesRound: number;
 }
 
 /** Pieces each player has. Absent = the base game's 15 / 5 / 4. */

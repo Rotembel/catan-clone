@@ -544,4 +544,51 @@ describe("CatanRoom", () => {
       }
     });
   });
+
+  describe("seat recovery (the real Wi-Fi night bug)", () => {
+    it("after start: name alone is refused, a wrong token is refused, a bot's token is refused", async () => {
+      const [host, guest] = await startedGame("RCLM");
+      await guest.room.leave();
+      await waitFor(() => (host.snapshots.at(-1)?.seats[1]?.connected === false ? true : undefined));
+
+      // Same display name, no token — the situation on game night.
+      await expect(server.sdk.joinOrCreate(ROOM_NAME, { code: "RCLM", name: "Grace" })).rejects.toThrow(/already started/);
+      // A made-up token.
+      await expect(server.sdk.joinOrCreate(ROOM_NAME, { code: "RCLM", name: "Grace", seatToken: "not-a-real-token" })).rejects.toThrow(/already started/);
+      // A bot's token: bots are not reclaimable. (Fresh room with a bot.)
+      const h2 = await connect("RCLB", "Ada", undefined, true);
+      await connect("RCLB", "Grace");
+      h2.room.send(MSG.addBot);
+      await waitFor(() => (h2.snapshots.at(-1)?.seats.length === 3 ? true : undefined));
+      h2.room.send(MSG.start, { ruleSetId: "home-large-5" });
+      await waitFor(() => h2.games[0]);
+      const botToken = (await store.load("RCLB"))!.seats.find((s) => s.kind === "bot")!.token;
+      await expect(server.sdk.joinOrCreate(ROOM_NAME, { code: "RCLB", name: "Bot Ada", seatToken: botToken })).rejects.toThrow(/already started/);
+      // The seat is still free for its rightful token, and it lands on *its* seat, with a new display name.
+      const back = await connect("RCLM", "Grace on her phone", guest.seat.seatToken);
+      expect(back.seat.playerId).toBe(1);
+      await waitFor(() => back.games[0]);
+      expect(back.games[0]).toEqual(latestGame(host));
+      const snap = await waitFor(() => host.snapshots.at(-1));
+      expect(snap.seats[1]?.name).toBe("Grace on her phone");
+      expect(snap.seats[1]?.connected).toBe(true);
+    });
+
+    it("a token can only ever land on its own seat", async () => {
+      const [host, guest] = await startedGame("OWNS");
+      // Host's token, presented from a new connection, gets seat 0 — never seat 1.
+      const twin = await connect("OWNS", "Whoever", host.seat.seatToken);
+      expect(twin.seat.playerId).toBe(0);
+      expect(twin.seat.seatToken).toBe(host.seat.seatToken);
+      // The old connection was superseded (it gets no further snapshots);
+      // the twin sees itself in seat 0 and the guest untouched in seat 1.
+      const snap = await waitFor(() => {
+        const s = twin.snapshots.at(-1);
+        return s?.seats[0]?.name === "Whoever" ? s : undefined;
+      });
+      expect(snap.seats.map((s) => s.name)).toEqual(["Whoever", "Grace"]);
+      expect(snap.seats[1]?.playerId).toBe(1);
+      void guest;
+    });
+  });
 });

@@ -33,12 +33,19 @@ export interface NetState {
   connected: boolean;
 }
 
-const STORAGE_KEY = "catan.session";
+const STORAGE_KEY = "catan.sessions";
 
-interface StoredSession {
+/** One seat credential per room, kept in localStorage so a killed tab or a fresh one can rejoin. */
+export interface StoredSession {
   code: string;
   name: string;
   seatToken: string;
+  savedAt: number;
+}
+
+interface SessionStore {
+  last?: string;
+  rooms: Record<string, StoredSession>;
 }
 
 /**
@@ -81,22 +88,48 @@ export function useNet(): NetState {
   return useSyncExternalStore(subscribe, () => state);
 }
 
-function loadSession(): StoredSession | undefined {
+function readStore(): SessionStore {
   try {
-    const raw = sessionStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as StoredSession) : undefined;
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) return JSON.parse(raw) as SessionStore;
   } catch {
-    return undefined;
+    // unavailable or corrupt — behave as if empty
   }
+  return { rooms: {} };
 }
 
-function saveSession(session: StoredSession | undefined): void {
+function writeStore(store: SessionStore): void {
   try {
-    if (session) sessionStorage.setItem(STORAGE_KEY, JSON.stringify(session));
-    else sessionStorage.removeItem(STORAGE_KEY);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
   } catch {
     // storage unavailable — a refresh just won't reclaim the seat
   }
+}
+
+/** The credential for a room (default: the room used most recently). */
+function loadSession(code?: string): StoredSession | undefined {
+  const store = readStore();
+  const key = (code ?? store.last ?? "").toUpperCase();
+  return key ? store.rooms[key] : undefined;
+}
+
+function saveSession(session: StoredSession): void {
+  const store = readStore();
+  store.rooms[session.code] = session;
+  store.last = session.code;
+  writeStore(store);
+}
+
+function clearSession(code: string): void {
+  const store = readStore();
+  delete store.rooms[code.toUpperCase()];
+  if (store.last === code.toUpperCase()) store.last = undefined;
+  writeStore(store);
+}
+
+/** Rooms this browser holds a seat in, most recent first — for the Resume buttons. */
+export function storedSessions(): StoredSession[] {
+  return Object.values(readStore().rooms).sort((a, b) => b.savedAt - a.savedAt);
 }
 
 function wire(r: Room, options: JoinOptions): void {
@@ -104,7 +137,7 @@ function wire(r: Room, options: JoinOptions): void {
   set({ screen: "lobby", code: options.code, name: options.name, connected: true, error: undefined });
 
   r.onMessage(EVT.seat, (seat: SeatPayload) => {
-    saveSession({ code: options.code, name: options.name, seatToken: seat.seatToken });
+    saveSession({ code: options.code, name: options.name, seatToken: seat.seatToken, savedAt: Date.now() });
     set({ seat });
   });
   r.onMessage(EVT.room, (snapshot: RoomSnapshot) => {
@@ -120,7 +153,7 @@ function wire(r: Room, options: JoinOptions): void {
     room = undefined;
     if (code === CLOSE_SUPERSEDED) {
       // Another tab/device took this seat with our token. Don't fight it.
-      saveSession(undefined);
+      clearSession(options.code);
       state = { screen: "home", code: "", name: state.name, connected: false, error: "You joined this game from another tab or device." };
       for (const l of listeners) l();
       return;
@@ -142,10 +175,10 @@ function scheduleReconnect(): void {
   reconnectAttempt++;
   reconnectTimer = setTimeout(async () => {
     reconnectTimer = undefined;
-    const session = loadSession();
+    const session = loadSession(state.code || undefined);
     if (!session || room) return;
     const ok = await tryConnect("join", session);
-    if (!ok && loadSession()) scheduleReconnect();
+    if (!ok && loadSession(session.code)) scheduleReconnect();
   }, delay);
 }
 
@@ -164,7 +197,7 @@ async function tryConnect(kind: "create" | "join", options: JoinOptions): Promis
     const message = describeError(error);
     // The room is genuinely gone (finished game, expired code): stop trying.
     if (/no game with that code|already started|room is full/i.test(message)) {
-      saveSession(undefined);
+      clearSession(options.code);
       set({ screen: "home", connected: false, error: friendlyJoinError(message) });
     }
     return false;
@@ -193,7 +226,7 @@ async function connect(kind: "create" | "join", options: JoinOptions): Promise<v
       scheduleReconnect();
       return;
     }
-    if (options.seatToken) saveSession(undefined);
+    if (options.seatToken) clearSession(options.code);
     set({ screen: "home", connected: false, error: friendlyJoinError(message) });
   }
 }
@@ -216,20 +249,32 @@ export function createRoom(name: string): Promise<void> {
   return connect("create", { code: randomCode(), name });
 }
 
+/**
+ * Join by code. If this browser already holds a seat in that room, the seat
+ * token rides along, so "Join" after a killed tab or app is a rejoin — the
+ * name is display only and need not match.
+ */
 export function joinRoom(code: string, name: string): Promise<void> {
-  return connect("join", { code: code.trim().toUpperCase(), name });
+  const upper = code.trim().toUpperCase();
+  const stored = loadSession(upper);
+  return connect("join", { code: upper, name, seatToken: stored?.seatToken });
 }
 
-/** Try to get back into the room from the last session (page refresh). */
-export async function resumeSession(): Promise<boolean> {
-  const session = loadSession();
+/** Get back into a room this browser holds a seat in (page refresh, or a Resume button). */
+export async function resumeSession(code?: string): Promise<boolean> {
+  const session = loadSession(code);
   if (!session) return false;
-  await connect("join", session);
+  await connect("join", { code: session.code, name: session.name, seatToken: session.seatToken });
   return state.connected;
 }
 
+export function forgetSession(code: string): void {
+  clearSession(code);
+  for (const l of listeners) l();
+}
+
 export function leaveRoom(): void {
-  saveSession(undefined);
+  if (state.code) clearSession(state.code);
   if (reconnectTimer) clearTimeout(reconnectTimer);
   reconnectTimer = undefined;
   reconnectAttempt = 0;

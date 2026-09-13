@@ -24,8 +24,8 @@ API reported it **public** on 2026-09-13 — not changed by the agent) · local:
 Also done outside the phase list: client server-URL derives from the
 page's hostname (LAN play), `.env.example`, `HANDOFF.md`.
 
-**171 tests** across the workspace (engine 104, rulesets 24, client 3,
-cli 16, server 24; `@catan/bot` has none of its own). `pnpm typecheck` clean
+**175 tests** across the workspace (engine 105, rulesets 25, client 3,
+cli 16, server 26; `@catan/bot` has none of its own). `pnpm typecheck` clean
 in all 7 packages.
 
 ### Cities & Knights plan (Phase 5, in slices — owner chose "full C&K, in slices")
@@ -79,8 +79,8 @@ smoke test in `HOME_STABLE_CHECKLIST.md` is the owner's** and gates the tag.
 
 What exists (all in the same commit series):
 - **Setup as data** — `RuleSet.setup: SetupRules { sequence: "snake", rounds: SetupRound[],
-  grantStartingResourcesFromRound }`; `GameState.setupRound`. Rounds snake 0..N-1, N-1..0,
-  0..N-1…; a placement grants from the configured (1-based) round. Absent = the classic
+  startingResourcesRound }`; `GameState.setupRound`. Rounds snake 0..N-1, N-1..0,
+  0..N-1…; exactly one (1-based) round pays starting resources. Absent = the classic
   two rounds (C&K's city-as-second-placement flag still drives it). The legacy four phase
   names are kept (round 0 → `…1`, later rounds → `…2`), so nothing downstream changed.
 - **Piece limits as data** — `RuleSet.pieceLimits` (`pieceLimitsOf(ruleSet)`); base stays 15/5/4.
@@ -96,7 +96,7 @@ What exists (all in the same commit series):
   ties → lowest index. `RuleSet.mapgen: { seed, generationVersion, candidateIndex, score }`
   travels with the layout; the layout itself is persisted, never regenerated.
 - **Preset `home-large-5` — "Home Large — 5 Seats"** (`presets/homeLarge.ts`): base rules,
-  radius 3 (37 hexes), 3 settlement rounds granting on the 3rd, **13 VP (configurable via
+  radius 3 (37 hexes), 3 settlement rounds paying on the **2nd**, **13 VP (configurable via
   `createRuleSet(id, { victoryPoints })`)**, `maxPlayers: 5`, piece limits 18/7/5
   (provisional — 5 settlements + 4 cities can't reach 13 with three openings).
   Registry entries carry `seats: {min,max}`; the server refuses a start outside that range.
@@ -129,6 +129,32 @@ reconnected automatically to the identical game (one tab was refreshed while the
 was down and came back too); play continued and the bots completed round 3 on the
 restarted server; the record on disk matched. LAN reachability was verified earlier by
 `curl` over the LAN IP (the in-app browser blocks non-localhost origins).
+
+**First real Wi-Fi night (2026-09-13, `786c7b5`, LAN IP URL) — game ran; two release
+blockers found and fixed:**
+1. *Starting resources.* `SetupRules.grantStartingResourcesFromRound` meant "from this
+   round onward" and Home Large used 3, so the second settlement paid nothing and the
+   third paid. Owner rule: exactly one round pays, the **second**. Field renamed to
+   `startingResourcesRound` (1-based, exactly one round); Home Large = 2; base game
+   unchanged (derived 2). Tests: base pays from settlement 2; 3-round rules pay once
+   on round 2 and nothing on round 3; the grant equals the adjacent producing hexes,
+   deserts pay nothing, bank + hands = 95 throughout; the real preset with 5 players.
+2. *Seat recovery.* A player whose tab was killed came back, typed name + code, and
+   got "already started" — the seat token lived in `sessionStorage` (lost with the
+   tab) and the Join form never sent one. Now credentials are kept per room code in
+   **`localStorage`** (`catan.sessions`, same origin), Join auto-attaches the stored
+   token for a known code (the typed name is display only), and the home screen
+   offers **Resume room CODE as Name** / Forget. Server side is unchanged and is the
+   only authority: reclaim is by token, humans only, the token maps to exactly one
+   seat, a newer connection supersedes the older (`CLOSE_SUPERSEDED`). Tests: name
+   alone refused, wrong token refused, a bot's token refused, a token lands only on
+   its own seat with a new display name, plus the existing refresh/restart/supersede
+   cases. Consequence: two tabs of the *same browser* now share one seat per room
+   (one device = one seat); multi-player dev testing needs separate browser profiles.
+3. *`.local` gave 403.* Vite's Host guard (`server.allowedHosts`); `.local` is now
+   allowed (verified: `.local` 200, LAN IP 200, foreign host still 403). Cross-origin
+   token migration (IP ↔ .local) is **not** solved — a seat is per address; hand out
+   one address for the night.
 
 **Known limitations (v0.1):**
 - The Wi-Fi smoke test with real devices has **not** been run — that is the tag gate.

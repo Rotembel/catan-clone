@@ -1,8 +1,10 @@
 // "Home Large — 5 Seats": the HOME STABLE v0.1 preset
 // (docs/planning/HOME_LAN_VERSION_WRAP.md §8). Base-game mechanics on a
 // generated 37-hex board, three opening placements each, 13 points to win
-// (provisional, configurable). Piece limits are raised to match the bigger
-// map and third placement — provisional too, see HANDOFF.md.
+// (provisional, configurable). Starting resources come from the *second*
+// settlement only, as in the base game — the third pays nothing (owner
+// decision after the first Wi-Fi night). Piece limits are raised to match
+// the bigger map and third placement — provisional, see HANDOFF.md.
 
 import type { RuleSet } from "@catan/shared";
 import type { RngState } from "@catan/engine";
@@ -50,7 +52,7 @@ export function createHomeLargeRuleSet(options: HomeLargeOptions = {}): { ruleSe
         { piece: "settlement", road: true },
         { piece: "settlement", road: true },
       ],
-      grantStartingResourcesFromRound: 3,
+      startingResourcesRound: 2,
     },
     pieceLimits: { ...HOME_LARGE.pieceLimits },
     mapgen: info,
