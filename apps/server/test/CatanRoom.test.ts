@@ -112,12 +112,12 @@ async function connect(
 
 const latestGame = (p: Peer) => p.games[p.games.length - 1];
 
-async function startedGame(code: string): Promise<[Peer, Peer]> {
+async function startedGame(code: string, ruleSetId?: string): Promise<[Peer, Peer]> {
   const host = await connect(code, "Ada", undefined, true);
   const guest = await connect(code, "Grace");
   await waitFor(() => (host.snapshots.at(-1)?.seats.length === 2 ? true : undefined));
 
-  host.room.send(MSG.start);
+  host.room.send(MSG.start, ruleSetId ? { ruleSetId } : undefined);
   await waitFor(() => (host.games.length > 0 && guest.games.length > 0 ? true : undefined));
   await waitFor(() => host.ruleSet);
   return [host, guest];
@@ -330,5 +330,29 @@ describe("CatanRoom", () => {
     await waitFor(() => back.games[0]);
     expect(latestGame(back)).toEqual(latestGame(host));
     expect(latestGame(back)!.turn.current).toBe(1); // it's Grace's turn now
+  });
+
+  it("starts the base game by default, and the friends-night variant when the host asks", async () => {
+    const [base] = await startedGame("BASE");
+    expect(base.ruleSet?.id).toBe("base");
+    expect(base.ruleSet?.houseRules.tradeDevCards).toBe(false);
+
+    const [host, guest] = await startedGame("FRND", "friends-night");
+    expect(host.ruleSet?.id).toBe("friends-night");
+    expect(host.ruleSet?.houseRules.tradeDevCards).toBe(true);
+    expect(guest.ruleSet).toEqual(host.ruleSet);
+
+    // The choice survives a restart along with everything else.
+    expect((await store.load("FRND"))?.ruleSet?.houseRules.tradeDevCards).toBe(true);
+  });
+
+  it("refuses to start with a rule set it doesn't know", async () => {
+    const host = await connect("UNKN", "Ada", undefined, true);
+    await connect("UNKN", "Grace");
+    await waitFor(() => (host.snapshots.at(-1)?.seats.length === 2 ? true : undefined));
+    host.room.send(MSG.start, { ruleSetId: "cities-and-dragons" });
+    const err = await waitFor(() => host.errors[0]);
+    expect(err.message).toMatch(/unknown rule set/);
+    expect(host.games).toHaveLength(0);
   });
 });

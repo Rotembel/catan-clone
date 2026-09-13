@@ -41,11 +41,24 @@ interface StoredSession {
   seatToken: string;
 }
 
+/**
+ * Where the game server lives. Derived from the page's own hostname so the
+ * same build works on localhost and when a phone opens the LAN IP; override
+ * with VITE_SERVER_URL (full URL) or VITE_SERVER_PORT (see .env.example).
+ * Pure — takes the location and env so it can be unit-tested.
+ */
+export function deriveServerUrl(
+  loc: { protocol: string; hostname: string },
+  env: { VITE_SERVER_URL?: string; VITE_SERVER_PORT?: string }
+): string {
+  if (env.VITE_SERVER_URL) return env.VITE_SERVER_URL;
+  const port = env.VITE_SERVER_PORT ?? "2567";
+  const proto = loc.protocol === "https:" ? "wss" : "ws";
+  return `${proto}://${loc.hostname}:${port}`;
+}
+
 function serverUrl(): string {
-  const configured = import.meta.env.VITE_SERVER_URL as string | undefined;
-  if (configured) return configured;
-  const proto = location.protocol === "https:" ? "wss" : "ws";
-  return `${proto}://${location.hostname}:2567`;
+  return deriveServerUrl(location, import.meta.env as Record<string, string | undefined>);
 }
 
 let state: NetState = { screen: "home", code: "", name: "", connected: false };
@@ -227,8 +240,8 @@ export function leaveRoom(): void {
   for (const l of listeners) l();
 }
 
-export function startGame(): void {
-  room?.send(MSG.start);
+export function startGame(ruleSetId: string): void {
+  room?.send(MSG.start, { ruleSetId });
 }
 
 export function sendAction(action: Action): void {

@@ -19,7 +19,7 @@
 
 import { Room, ServerError, type Client } from "@colyseus/core";
 import { apply, createInitialState, IllegalActionError } from "@catan/engine";
-import { createBaseRuleSet } from "@catan/rulesets";
+import { createRuleSet, ruleSetInfo } from "@catan/rulesets";
 import {
   CLOSE_SUPERSEDED,
   EVT,
@@ -31,6 +31,7 @@ import {
   type JoinOptions,
   type RoomSnapshot,
   type RuleSet,
+  type StartOptions,
 } from "@catan/shared";
 import { randomBytes } from "node:crypto";
 import { MemoryStore, type GameRecord, type GameStore, type StoredSeat } from "./store.js";
@@ -77,7 +78,7 @@ export class CatanRoom extends Room {
       throw new ServerError(4302, "no game with that code");
     }
 
-    this.onMessage(MSG.start, (client) => void this.handleStart(client));
+    this.onMessage(MSG.start, (client, options?: StartOptions) => void this.handleStart(client, options));
     this.onMessage(MSG.action, (client, action: Action) => void this.handleAction(client, action));
   }
 
@@ -150,17 +151,21 @@ export class CatanRoom extends Room {
 
   // -- handlers ------------------------------------------------------------
 
-  private async handleStart(client: Client): Promise<void> {
+  private async handleStart(client: Client, options?: StartOptions): Promise<void> {
     const seat = this.seatFor(client);
     if (!seat?.isHost) return this.fail(client, "only the host can start the game");
     if (this.game) return this.fail(client, "the game has already started");
     if (this.seats.length < MIN_PLAYERS) {
       return this.fail(client, `need at least ${MIN_PLAYERS} players`);
     }
+    const ruleSetId = options?.ruleSetId;
+    if (ruleSetId !== undefined && !ruleSetInfo(ruleSetId)) {
+      return this.fail(client, `unknown rule set: ${ruleSetId}`);
+    }
 
     // The seed is server-chosen; the engine itself stays deterministic.
     const seed = `${this.code}-${Date.now()}-${randomBytes(4).toString("hex")}`;
-    const { ruleSet, state } = createBaseRuleSet({ seed });
+    const { ruleSet, state } = createRuleSet(ruleSetId, { seed });
     this.ruleSet = ruleSet;
     this.game = createInitialState(ruleSet, {
       playerNames: this.seats.map((s) => s.name),

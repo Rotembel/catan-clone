@@ -39,9 +39,14 @@ export interface RoomSnapshot {
   started: boolean;
 }
 
+/** Payload of `start`: which rule set to play. Omitted = the default (base). */
+export interface StartOptions {
+  ruleSetId?: string;
+}
+
 // Client -> server
 export const MSG = {
-  /** Host starts the game once enough seats are filled. */
+  /** Host starts the game once enough seats are filled. Payload: `StartOptions`. */
   start: "start",
   /** A game intent. Payload: `Action`. */
   action: "action",

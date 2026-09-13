@@ -42,6 +42,9 @@ importers:
       '@catan/engine':
         specifier: workspace:*
         version: link:../../packages/engine
+      '@catan/rulesets':
+        specifier: workspace:*
+        version: link:../../packages/rulesets
       '@catan/shared':
         specifier: workspace:*
         version: link:../../packages/shared

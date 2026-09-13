@@ -330,6 +330,46 @@ describe("player-to-player trade", () => {
     expect(accepted.players[1]!.devCards).toContain("knight");
     expect(accepted.players[0]!.devCards).not.toContain("knight");
   });
+
+  it("with the house rule on, a player can ask for a card too — and only if the responder holds it", () => {
+    const houseRuled = testRuleSet({ tradeDevCards: true });
+    let state = inMainTurn(playSetup(newGame(houseRuled), houseRuled));
+    state = giveResources(state, 0, { wood: 1 });
+    state = giveDevCard(state, 1, "monopoly");
+    const offer = {
+      fromPlayerId: 0,
+      toPlayerId: 1,
+      give: { wood: 1 },
+      receive: {},
+      receiveDevCards: ["monopoly"],
+    };
+
+    const proposed = apply(state, { playerId: 0, action: { type: "proposeTrade", offer } }, houseRuled);
+    const accepted = apply(proposed, { playerId: 1, action: { type: "respondTrade", accept: true } }, houseRuled);
+    expect(accepted.players[0]!.devCards).toContain("monopoly");
+    expect(accepted.players[1]!.devCards).not.toContain("monopoly");
+    expect(accepted.players[1]!.resources.wood).toBe(state.players[1]!.resources.wood + 1);
+
+    // Asking for a card the responder doesn't have can be proposed but not accepted.
+    const greedy = { ...offer, receiveDevCards: ["monopoly", "monopoly"] };
+    const proposed2 = apply(state, { playerId: 0, action: { type: "proposeTrade", offer: greedy } }, houseRuled);
+    expect(() =>
+      apply(proposed2, { playerId: 1, action: { type: "respondTrade", accept: true } }, houseRuled)
+    ).toThrow(IllegalActionError);
+  });
+
+  it("the bank never trades development cards, house rule or not", () => {
+    const houseRuled = testRuleSet({ tradeDevCards: true });
+    let state = inMainTurn(playSetup(newGame(houseRuled), houseRuled));
+    state = giveDevCard(state, 0, "knight");
+    expect(() =>
+      apply(
+        state,
+        { playerId: 0, action: { type: "proposeTrade", offer: { fromPlayerId: 0, give: {}, receive: { ore: 1 }, giveDevCards: ["knight"] } } },
+        houseRuled
+      )
+    ).toThrow(/bank does not trade/);
+  });
 });
 
 describe("development cards", () => {

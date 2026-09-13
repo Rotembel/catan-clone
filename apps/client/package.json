@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@catan/engine": "workspace:*",
+    "@catan/rulesets": "workspace:*",
     "@catan/shared": "workspace:*",
     "colyseus.js": "^0.16.22",
     "react": "^18.3.1",

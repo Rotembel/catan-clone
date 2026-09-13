@@ -22,6 +22,7 @@ import type {
   RuleSet,
   VertexId,
 } from "@catan/shared";
+import { ruleSetInfo } from "@catan/rulesets";
 import { clearError, leaveRoom, sendAction, type NetState } from "../net.js";
 import { Board, type BoardTargets } from "./Board.js";
 import { PLAYER_COLORS } from "./colors.js";
@@ -166,6 +167,11 @@ export function Game({ net, game, ruleSet, me }: Props) {
       <header className="topbar">
         <div>
           <strong>Room {net.code}</strong>
+          {ruleSet.houseRules.tradeDevCards && (
+            <span className="tag" title={ruleSetInfo(ruleSet.id)?.description}>
+              {ruleSetInfo(ruleSet.id)?.label ?? ruleSet.id}
+            </span>
+          )}
           {!net.connected && <span className="tag warn">reconnecting…</span>}
         </div>
         <div className="status">{statusText(game, ruleSet, me, mode)}</div>
@@ -283,10 +289,10 @@ export function Game({ net, game, ruleSet, me }: Props) {
 
       {owesDiscard && <DiscardDialog game={game} me={me} />}
       {tradeForMe && (
-        <TradeResponse game={game} offer={tradeForMe} me={me} />
+        <TradeResponse game={game} ruleSet={ruleSet} offer={tradeForMe} me={me} />
       )}
       {dialog === "bank" && <BankTradeDialog game={game} ruleSet={ruleSet} me={me} onClose={() => setDialog(null)} />}
-      {dialog === "trade" && <PlayerTradeDialog game={game} me={me} onClose={() => setDialog(null)} />}
+      {dialog === "trade" && <PlayerTradeDialog game={game} ruleSet={ruleSet} me={me} onClose={() => setDialog(null)} />}
       {dialog === "monopoly" && (
         <PickResources
           title="Monopoly — take every card of one resource"
@@ -469,19 +475,35 @@ function DiscardDialog({ game, me }: { game: GameState; me: number }) {
   );
 }
 
-function fmt(res: Partial<Record<Resource, number>>): string {
+function fmt(res: Partial<Record<Resource, number>>, devCards: string[] | undefined, ruleSet: RuleSet): string {
   const parts = RESOURCES.filter((r) => (res[r] ?? 0) > 0).map((r) => `${res[r]} ${RESOURCE_ICON[r]} ${r}`);
+  for (const [id, n] of Object.entries(countBy(devCards ?? []))) {
+    parts.push(`${n} × ${ruleSet.devCards.find((d) => d.id === id)?.label ?? id} 📜`);
+  }
   return parts.length ? parts.join(", ") : "nothing";
 }
 
-function TradeResponse({ game, offer, me }: { game: GameState; offer: NonNullable<GameState["pendingTrade"]>; me: number }) {
+/** Does `hand` contain every card in `wanted` (with multiplicity)? */
+function holdsCards(hand: string[], wanted: string[]): boolean {
+  const pool = [...hand];
+  for (const id of wanted) {
+    const i = pool.indexOf(id);
+    if (i < 0) return false;
+    pool.splice(i, 1);
+  }
+  return true;
+}
+
+function TradeResponse({ game, ruleSet, offer, me }: { game: GameState; ruleSet: RuleSet; offer: NonNullable<GameState["pendingTrade"]>; me: number }) {
   const from = game.players.find((p) => p.id === offer.fromPlayerId)!;
   const mine = game.players.find((p) => p.id === me)!;
-  const canAccept = RESOURCES.every((r) => mine.resources[r] >= (offer.receive[r] ?? 0));
+  const canAccept =
+    RESOURCES.every((r) => mine.resources[r] >= (offer.receive[r] ?? 0)) &&
+    holdsCards(mine.devCards, offer.receiveDevCards ?? []);
   return (
     <Modal title={`${from.name} proposes a trade`}>
-      <p>They give you: <b>{fmt(offer.give)}</b></p>
-      <p>You give them: <b>{fmt(offer.receive)}</b></p>
+      <p>They give you: <b>{fmt(offer.give, offer.giveDevCards, ruleSet)}</b></p>
+      <p>You give them: <b>{fmt(offer.receive, offer.receiveDevCards, ruleSet)}</b></p>
       {!canAccept && <p className="error">You don't have what they're asking for.</p>}
       <div className="row end">
         <button onClick={() => sendAction({ type: "respondTrade", accept: false })}>Decline</button>
@@ -527,13 +549,63 @@ function BankTradeDialog({ game, ruleSet, me, onClose }: { game: GameState; rule
   );
 }
 
-function PlayerTradeDialog({ game, me, onClose }: { game: GameState; me: number; onClose: () => void }) {
+/** Per-card-id counters for a dev-card side of a trade (house rule #1). */
+function DevCardCounter({
+  label,
+  counts,
+  onChange,
+  limit,
+  ruleSet,
+}: {
+  label: string;
+  counts: Record<string, number>;
+  onChange: (id: string, n: number) => void;
+  /** Cards actually held; when given, only those ids are offered and capped. */
+  limit?: Record<string, number>;
+  ruleSet: RuleSet;
+}) {
+  const ids = limit ? Object.keys(limit) : ruleSet.devCards.map((d) => d.id);
+  if (ids.length === 0) return null;
+  return (
+    <div className="counter" data-testid={label}>
+      {ids.map((id) => {
+        const n = counts[id] ?? 0;
+        const max = limit ? limit[id]! : 99;
+        return (
+          <div key={id} className="counter-row">
+            <span>📜 {ruleSet.devCards.find((d) => d.id === id)?.label ?? id}{limit ? <span className="muted"> ({max})</span> : null}</span>
+            <span className="stepper">
+              <button className="small" onClick={() => onChange(id, n - 1)} disabled={n === 0}>−</button>
+              <b>{n}</b>
+              <button className="small" onClick={() => onChange(id, n + 1)} disabled={n >= max}>+</button>
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function expandCounts(counts: Record<string, number>): string[] {
+  return Object.entries(counts).flatMap(([id, n]) => Array.from({ length: n }, () => id));
+}
+
+function PlayerTradeDialog({ game, ruleSet, me, onClose }: { game: GameState; ruleSet: RuleSet; me: number; onClose: () => void }) {
   const player = game.players.find((p) => p.id === me)!;
   const others = game.players.filter((p) => p.id !== me);
   const [to, setTo] = useState<number>(others[0]!.id);
   const give = useCounts();
   const receive = useCounts();
-  const ok = give.total > 0 && receive.total > 0;
+  const devCardsOn = ruleSet.houseRules.tradeDevCards;
+  const [giveCards, setGiveCards] = useState<Record<string, number>>({});
+  const [wantCards, setWantCards] = useState<Record<string, number>>({});
+  const bump = (set: typeof setGiveCards) => (id: string, n: number) =>
+    set((c) => ({ ...c, [id]: Math.max(0, n) }));
+  const giveCardList = expandCounts(giveCards);
+  const wantCardList = expandCounts(wantCards);
+  const givesSomething = give.total > 0 || giveCardList.length > 0;
+  const wantsSomething = receive.total > 0 || wantCardList.length > 0;
+  const ok = givesSomething && wantsSomething;
   return (
     <Modal title="Propose a trade" onClose={onClose}>
       <div className="row wrap">
@@ -545,11 +617,27 @@ function PlayerTradeDialog({ game, me, onClose }: { game: GameState; me: number;
       </div>
       <p className="muted">You give</p>
       <Counter counts={give.counts} bump={(r, d) => give.bump(r, d, player.resources[r])} limit={player.resources} />
+      {devCardsOn && (
+        <DevCardCounter label="give-dev-cards" ruleSet={ruleSet} counts={giveCards} onChange={bump(setGiveCards)} limit={countBy(player.devCards)} />
+      )}
       <p className="muted">You want</p>
       <Counter counts={receive.counts} bump={receive.bump} />
+      {devCardsOn && (
+        <DevCardCounter label="want-dev-cards" ruleSet={ruleSet} counts={wantCards} onChange={bump(setWantCards)} />
+      )}
       <div className="row end">
         <button className="primary" disabled={!ok} onClick={() => {
-          sendAction({ type: "proposeTrade", offer: { fromPlayerId: me, toPlayerId: to, give: give.asPartial(), receive: receive.asPartial() } });
+          sendAction({
+            type: "proposeTrade",
+            offer: {
+              fromPlayerId: me,
+              toPlayerId: to,
+              give: give.asPartial(),
+              receive: receive.asPartial(),
+              ...(giveCardList.length ? { giveDevCards: giveCardList } : {}),
+              ...(wantCardList.length ? { receiveDevCards: wantCardList } : {}),
+            },
+          });
           onClose();
         }}>
           Offer
