@@ -6,8 +6,8 @@ exists, how it's verified, what's decided, what's next.
 
 Repo: https://github.com/Rotembel/catan-clone (created private; the GitHub
 API reported it **public** on 2026-09-13 — not changed by the agent) · local:
-`~/Desktop/catan-starter-docs` · `main` is green and pushed as of `d8ec23a`
-(C&K slice 1) plus the planning-docs commit after it.
+`~/Desktop/catan-starter-docs` · `main` is green and pushed as of `5a15a35`
+(C&K slice 5) plus the docs commit after it.
 
 ## Phases
 
@@ -18,14 +18,14 @@ API reported it **public** on 2026-09-13 — not changed by the agent) · local:
 | 2 Real-time multiplayer | done | `4360969` | 8 socket tests; played live in two browser tabs |
 | 3 Stability | done | `598acf4` | server killed & restarted mid-game twice; both tabs resumed and play continued |
 | 4 House rule #1 (trade dev cards) | done | `9bd4bad` | flag-on/off tests at ruleset, engine, server; live offer of a card |
-| 5 Cities & Knights | **slices 1–4 of 5 done** (1: commodities + improvements; 2: event die, barbarians, knights; 3: progress cards; 4: metropolises, city walls, merchant) — only slice 5 (UI polish) remains | `d8ec23a`, `8f4db83`, `15cf23b`, slice-4 commit | 72 engine tests for the expansion + 4 seeded bot games at 13 VP with resource, commodity and progress-card conservation |
+| 5 Cities & Knights | **COMPLETE** — all 5 slices (1: commodities + improvements; 2: event die, barbarians, knights; 3: progress cards; 4: metropolises, city walls, merchant; 5: response phases, the last six cards, knight displacement, forced discards, human-playable client) | `d8ec23a`, `8f4db83`, `15cf23b`, `c5e94f6`, `5a15a35` | 82 engine tests for the expansion + seeded bot games at 13 VP with conservation invariants + a live two-human/two-bot browser drill (see slice 5) |
 | 6 Custom content | not started | — | |
 
 Also done outside the phase list: client server-URL derives from the
 page's hostname (LAN play), `.env.example`, `HANDOFF.md`.
 
-**214 tests** across the workspace (engine 143, rulesets 25, client 3,
-cli 16, server 27; `@catan/bot` has none of its own). `pnpm typecheck` clean
+**225 tests** across the workspace (engine 153, rulesets 25, client 3,
+cli 16, server 28; `@catan/bot` has none of its own). `pnpm typecheck` clean
 in all 7 packages.
 
 ### Cities & Knights plan (Phase 5, in slices — owner chose "full C&K, in slices")
@@ -167,7 +167,90 @@ in all 7 packages.
    next city (official: same); the barbarians never target a player with only
    metropolises (official: they lose nothing — same); Master Merchant lets you see the
    target's hand (official: you look at it — same, since state is open).
-5. client UI polish for all of the above (slice 1–4 UIs are functional but plain)
+5. **done** — the human-playability layer. **Verdict: CITIES & KNIGHTS PHASE 5
+   COMPLETE** — every mandatory action the engine can demand of a player has a
+   client path (audited: `legalActions` action types vs. `Game.tsx` handlers), all
+   24 official progress cards are in the decks, and bots answer every prompt.
+   **Response-phase architecture** (`packages/engine/src/interactions/`): a card
+   or effect that needs *other* players' decisions calls `startInteraction(state,
+   {kind, sourcePlayerId, sourceCardId?, responders, payload})`. That writes
+   `GameState.pendingInteraction { kind, sourcePlayerId, sourceCardId, responders,
+   currentResponder, payload, returnPhase }` and sets `turn.phase = "respond"`.
+   Exactly one responder acts at a time; the only legal action for them is
+   `respondInteraction {payload}`, whose bounded payloads come from the module's
+   `options(state, ruleSet, playerId)` (`interactionOptions` is what
+   `legalActions`, the bot and the client all read). The module's `respond(...)`
+   applies the answer, then `advanceInteraction` moves to the next responder or
+   restores `returnPhase`. Everything lives in plain state (no closures), so a
+   response survives persistence, reconnect, server restart and bot seats
+   (`nextActor` returns `currentResponder`). Chaining is allowed: a response may
+   start a follow-up interaction (Deserter choose → Deserter place); the
+   follow-up's `returnPhase` inherits the original one. Modules in
+   `interactions/index.ts`: `commercialHarbor`, `wedding`, `deserterChoose`,
+   `deserterPlace`, `diplomatReplace`, `displaceKnight`. `queue.ts` holds
+   start/advance; modules and cards import only `queue.ts` (an earlier circular
+   import through `index.ts` left a registry entry undefined — keep it that way).
+   **Forced discards** (`GameState.discardRequests: DiscardRequest[] { playerId,
+   count, reason, sourcePlayerId?, sourceCardId?, returnPhase }`, `TurnPhase
+   "forcedDiscard"`, `requestDiscards(...)`): the existing `discardCards` action
+   serves both the 7 roll (phase `discard`, threshold-based) and forced requests
+   (phase `forcedDiscard`, exact count); `discardCountFor(state, playerId, ruleSet)`
+   reads whichever applies, so the client dialog is one component titled by the
+   reason ("Saboteur! discard 3 cards"). Never silent.
+   **Knight displacement** (`reducers/knights.ts` + `interactions/displaceKnight.ts`):
+   `knightMoveTargets(state, ruleSet, playerId, from, level) → { free, displace }`;
+   `moveKnight` onto a strictly weaker *active-or-not* enemy knight (mover must be
+   stronger) removes it, and its owner gets a `displaceKnight` response to re-place
+   it on a vertex reachable along their roads (`knightReachableVertices`); with
+   nothing reachable the knight is lost. Intrigue uses the same path.
+   **Cards implemented this slice (+6 → 24 = the full official deck):**
+   Commercial Harbor ×2 (every other player with commodities must give one
+   commodity of their choice for one of your resources you pick per player — a
+   response per opponent), Wedding ×2 (each player with more VP gives 2 cards of
+   their choice, or their whole hand if smaller), Saboteur ×2 (each player with ≥
+   your VP discards half, rounded down — forced-discard phase), Deserter ×2 (pick an
+   opponent; *they* choose which of their knights to remove; you place a knight of
+   the same level, inactive, on a free vertex on your roads — or decline if none),
+   Diplomat ×2 (remove any *open* road — one with a free end not touching another
+   road/building of its owner — your own may be re-placed via a response, others'
+   are just gone; longest road is recomputed), Intrigue ×2 (displace an enemy knight
+   standing on one of your roads' vertices; the owner re-places or loses it).
+   **Deferred: none.**
+   **Rules deviations / notes:** Saboteur targets `VP ≥ yours` (official: "equal or
+   more"); Deserter's replacement knight arrives inactive (official: same);
+   Commercial Harbor lets the victim choose the commodity (official) but the
+   resource offered is fixed by the player of the card up front (official: same);
+   Wedding's "cards" include commodities; Spy still cannot be played on a full hand;
+   a tied barbarian defence still awards nothing (official: progress cards).
+   **Bot:** answers every `respondInteraction` (best vertex/edge option, else the
+   first option), every forced discard and every follow-up; games remain
+   deterministic per seed and finish on every seed tried. It still never plays
+   Deserter/Diplomat/Intrigue/Wedding/Saboteur/Commercial Harbor itself (holds
+   them), and never displaces a knight on purpose.
+   **Client (human-playable):** tap one of your knights → menu with Activate /
+   Promote / Move (Move highlights free and displaceable targets; displaceable
+   enemy knights are marked); "Build knight" button highlights legal vertices;
+   responses auto-enter a board mode (vertex or edge targets, Decline where the
+   rules allow) or open a mandatory list picker; forced discards reuse the discard
+   dialog with the reason in the title; Diplomat picks its road on the board; the
+   top strip shows barbarians x/7, the event die, the current player and the knight
+   legend; the status line names every waiting state ("Waiting for Grace to answer
+   diplomat: re-place your road."). No hover-only controls; one modal at a time.
+   **Live drill (room `DRIL` in `.catan-home-data`, gitignored; Ada on `localhost`,
+   Grace on `127.0.0.1` — one browser origin holds one seat per room, so a
+   multi-tab drill needs two origins):** C&K lobby and setup for 2 humans + 2 bots
+   through the UI (second placement is a city, paid), 7-discard modal, robber,
+   bank/port trade, Build knight, two barbarian attacks with auto-downgrade,
+   Activate/Promote via the tap menu, Improve, Engineer (wall), Merchant (hex pick,
+   chip + VP), Crane, a 7-discard with a wall-raised threshold, Deserter as a
+   multi-player response (Ada answers on the board, Grace places with Decline
+   offered), Saboteur (Ada's forced-discard modal, 7 → 4 cards), Diplomat (edge
+   pick, re-place prompt with 4 targets and Decline), a refresh during the Diplomat
+   decision and a launcher restart (Ctrl+C) during a robber decision and during the
+   Deserter response — every tab recovered its prompt. *Not exercised live* (engine
+   tests only): metropolis placement with several eligible cities, knight Move /
+   displacement through the UI, Intrigue, Commercial Harbor, Wedding, the
+   progress-hand-limit dialog.
 
 ## HOME STABLE v0.1 — built, release candidate for `v0.6.0-home.1` (NOT tagged yet)
 
@@ -362,7 +445,11 @@ Tests: `pnpm test`. Types: `pnpm typecheck`.
   (ratios/types are standard).
 - Largest-army/longest-road tie rule is implemented as *state* (holder kept
   until strictly beaten).
-- Client has only the `deriveServerUrl` unit test; UI is verified manually.
+- Client has only the `deriveServerUrl` unit test; UI is verified manually
+  (see the C&K slice-5 live drill for what was actually clicked).
+- Next phase: Phase 6 (custom content — house rules, custom event decks,
+  61-hex maps) is *not started*; the Wi-Fi smoke test for HOME STABLE
+  `v0.6.0-home.1` is still the gate for tagging.
 - Colyseus `maxClients` is set above 4 on purpose (per-seat limit is
   enforced in `onJoin`) so a full room stays listed for `joinOrCreate`.
 
