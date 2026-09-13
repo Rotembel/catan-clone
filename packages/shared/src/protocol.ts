@@ -19,7 +19,12 @@ export interface JoinOptions {
   name: string;
   /** Returned by an earlier `seat` message — lets a refreshed page reclaim its seat. */
   seatToken?: string;
+  /** Only the host's create sets this; a join for an unknown code is refused, not conjured. */
+  create?: boolean;
 }
+
+/** Close code sent to a connection whose seat was reclaimed by a newer one. */
+export const CLOSE_SUPERSEDED = 4310;
 
 export interface Seat {
   playerId: number;

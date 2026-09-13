@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { resumeSession, useNet } from "./net.js";
+import { leaveRoom, resumeSession, useNet } from "./net.js";
 import { Game } from "./components/Game.js";
 import { Home } from "./components/Home.js";
 import { Lobby } from "./components/Lobby.js";
@@ -13,6 +13,14 @@ export function App() {
     void resumeSession().finally(() => setResuming(false));
   }, []);
 
+  if (net.screen === "connecting" && (resuming || net.error)) {
+    return (
+      <div className="home">
+        <p className="muted">{net.error ?? "Reconnecting…"}</p>
+        <button onClick={leaveRoom}>Give up and start over</button>
+      </div>
+    );
+  }
   if (resuming && net.screen !== "lobby" && net.screen !== "game") {
     return <div className="home"><p className="muted">Reconnecting…</p></div>;
   }

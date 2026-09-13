@@ -4,6 +4,7 @@
 
 import { Client, type Room } from "colyseus.js";
 import {
+  CLOSE_SUPERSEDED,
   EVT,
   MSG,
   ROOM_NAME,
@@ -49,6 +50,8 @@ function serverUrl(): string {
 
 let state: NetState = { screen: "home", code: "", name: "", connected: false };
 let room: Room | undefined;
+let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+let reconnectAttempt = 0;
 const listeners = new Set<() => void>();
 
 function set(patch: Partial<NetState>): void {
@@ -100,11 +103,63 @@ function wire(r: Room, options: JoinOptions): void {
 
   r.onError((code, message) => set({ error: `connection error ${code}: ${message ?? ""}` }));
   r.onLeave((code) => {
+    if (room !== r) return; // an older connection we already replaced
     room = undefined;
-    // 1000 = we left on purpose; anything else is a drop worth surfacing.
-    set({ connected: false, error: code === 1000 ? undefined : "disconnected from the server" });
+    if (code === CLOSE_SUPERSEDED) {
+      // Another tab/device took this seat with our token. Don't fight it.
+      saveSession(undefined);
+      state = { screen: "home", code: "", name: state.name, connected: false, error: "You joined this game from another tab or device." };
+      for (const l of listeners) l();
+      return;
+    }
+    if (code === 1000) {
+      set({ connected: false });
+      return;
+    }
+    // A drop (or the server restarting). Keep trying to get the seat back;
+    // the server rehydrates the game from its store, so nothing is lost.
+    set({ connected: false, error: "Connection lost — reconnecting…" });
+    scheduleReconnect();
   });
 }
+
+function scheduleReconnect(): void {
+  if (reconnectTimer) return;
+  const delay = Math.min(1000 * 2 ** reconnectAttempt, 10_000);
+  reconnectAttempt++;
+  reconnectTimer = setTimeout(async () => {
+    reconnectTimer = undefined;
+    const session = loadSession();
+    if (!session || room) return;
+    const ok = await tryConnect("join", session);
+    if (!ok && loadSession()) scheduleReconnect();
+  }, delay);
+}
+
+/** Connect without touching `screen` on failure — used by reconnects. */
+async function tryConnect(kind: "create" | "join", options: JoinOptions): Promise<boolean> {
+  const client = new Client(serverUrl());
+  try {
+    const r =
+      kind === "create"
+        ? await client.create(ROOM_NAME, { ...options, create: true })
+        : await client.joinOrCreate(ROOM_NAME, options);
+    reconnectAttempt = 0;
+    wire(r, options);
+    return true;
+  } catch (error) {
+    const message = describeError(error);
+    // The room is genuinely gone (finished game, expired code): stop trying.
+    if (/no game with that code|already started|room is full/i.test(message)) {
+      saveSession(undefined);
+      set({ screen: "home", connected: false, error: friendlyJoinError(message) });
+    }
+    return false;
+  }
+}
+
+/** Definitive rejections — the room is gone or won't have us. Anything else is transient. */
+const FATAL_JOIN = /no game with that code|no rooms found|already started|room is full/i;
 
 async function connect(kind: "create" | "join", options: JoinOptions): Promise<void> {
   set({ screen: "connecting", error: undefined, code: options.code, name: options.name });
@@ -112,18 +167,36 @@ async function connect(kind: "create" | "join", options: JoinOptions): Promise<v
   try {
     const r =
       kind === "create"
-        ? await client.create(ROOM_NAME, options)
-        : await client.join(ROOM_NAME, options);
+        ? await client.create(ROOM_NAME, { ...options, create: true })
+        : await client.joinOrCreate(ROOM_NAME, options);
+    reconnectAttempt = 0;
     wire(r, options);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = describeError(error);
+    if (kind === "join" && options.seatToken && !FATAL_JOIN.test(message)) {
+      // We hold a seat and the server is merely unreachable (restarting?).
+      // Keep the token and keep knocking; the game is safe in its store.
+      set({ screen: "connecting", connected: false, error: "Can't reach the server — retrying…" });
+      scheduleReconnect();
+      return;
+    }
+    if (options.seatToken) saveSession(undefined);
     set({ screen: "home", connected: false, error: friendlyJoinError(message) });
   }
 }
 
+/** Colyseus rejects with a raw Event when the socket itself fails; make that readable. */
+function describeError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof Event !== "undefined" && error instanceof Event) return "could not reach the server";
+  return String(error);
+}
+
 function friendlyJoinError(message: string): string {
-  if (/no rooms found/i.test(message)) return "No game with that code — check it and try again.";
-  return message;
+  if (/no game with that code|no rooms found/i.test(message)) {
+    return "No game with that code — check it and try again.";
+  }
+  return message.replace(/^.*?\d{4}\s*/, "") || message;
 }
 
 export function createRoom(name: string): Promise<void> {
@@ -139,15 +212,17 @@ export async function resumeSession(): Promise<boolean> {
   const session = loadSession();
   if (!session) return false;
   await connect("join", session);
-  const ok = state.connected;
-  if (!ok) saveSession(undefined);
-  return ok;
+  return state.connected;
 }
 
 export function leaveRoom(): void {
   saveSession(undefined);
-  void room?.leave();
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+  reconnectTimer = undefined;
+  reconnectAttempt = 0;
+  const r = room;
   room = undefined;
+  void r?.leave();
   state = { screen: "home", code: "", name: state.name, connected: false };
   for (const l of listeners) l();
 }
