@@ -129,11 +129,17 @@ start("server", ["--filter", "@catan/server", "start"]);
 start("client", ["--filter", "@catan/client", "dev", "--", "--host", "0.0.0.0", "--port", String(clientPort), "--strictPort"]);
 
 const lans = lanAddresses();
+// The browser keeps each player's seat token per *origin*, so an address that
+// survives a DHCP change (the host's Bonjour/mDNS name) is the one to hand out;
+// the raw IP is the fallback for devices that can't resolve .local.
+const host = os.hostname();
+const localName = host.endsWith(".local") ? host : host.includes(".") ? undefined : `${host}.local`;
 setTimeout(() => {
   console.log("\n========================================================");
-  console.log("  Players on this Wi-Fi open:");
+  console.log("  Players on this Wi-Fi open (prefer the first — it survives an IP change):");
+  if (localName) console.log(`    http://${localName}:${clientPort}`);
   if (lans.length === 0) console.log("  (no LAN address found — are you connected to Wi-Fi?)");
-  for (const l of lans) console.log(`    http://${l.address}:${clientPort}    (${l.name})`);
+  for (const l of lans) console.log(`    http://${l.address}:${clientPort}    (${l.name}, fallback)`);
   console.log(`  This machine:  http://localhost:${clientPort}`);
   console.log(`  Game server:   ws://<same address>:${serverPort}`);
   console.log("  Ctrl+C stops both.");

@@ -18,12 +18,20 @@ real router, so it is yours. Tag only when every box is ticked.
 Host machine = the laptop that runs the game. Everyone else = phones,
 tablets, other laptops on the **same Wi-Fi**.
 
+0. Before leaving home: `pnpm install`, `pnpm test`, and clear old drill rooms from
+   `.catan-home-data/` (or move the folder aside) so the night starts clean.
 1. Host joins the Wi-Fi. Turn off any VPN.
-2. In the repo: `pnpm install` (first time only), then **`pnpm run home`**.
-   - It prints the version + commit, the saves directory, and a box with
-     `http://192.168.x.x:5173`. If it says a port is in use, follow the message.
-3. On **two other physical devices**, open the printed `http://…:5173` URL.
-   - If a phone can't load it: check the host firewall allows Node on ports
+2. In the repo: **`pnpm run home`**.
+   - It prints the version + commit, the saves directory, and a box with two
+     addresses: `http://<laptop-name>.local:5173` (preferred) and
+     `http://192.168.x.x:5173` (fallback). If it says a port is in use, follow the message.
+   - macOS may ask whether to allow incoming connections for `node` — click **Allow**.
+3. On **two other physical devices**, open the **`.local`** address; if a device can't
+   resolve it (some Android phones), use the IP address instead.
+   - Why it matters: each phone keeps its seat token *per address*. If the laptop's IP
+     changes mid-evening, phones that used the IP lose their seat; phones on the
+     `.local` name don't.
+   - If a phone can't load either: check the host firewall allows Node on ports
      5173 and 2567, and that the router isn't isolating clients ("AP isolation").
 4. Host: enter a name → **Create a room**. Read the 4-letter code aloud.
 5. The two devices: name → code → **Join**.
@@ -35,13 +43,18 @@ tablets, other laptops on the **same Wi-Fi**.
    Do at least one bank trade and one player trade.
 9. **Refresh** one human's browser → it comes back in the same seat with the same board.
 10. **Turn Wi-Fi off and on** on one phone (10–20 s) → "reconnecting…" then back, same seat.
+    - While it says "Can't reach the server — retrying…", **do not tap "Give up and start
+      over"**: that button deletes the phone's seat token and the seat can't be reclaimed.
 11. **Restart the server**: Ctrl+C in the `pnpm run home` terminal, run `pnpm run home` again.
     All devices reconnect on their own; the board, hands and turn are exactly as before;
     the bots resume when it is their turn (they wait until a human is connected).
+    - Keep the same room: the saves live in `.catan-home-data/<CODE>.json` (with a
+      `.bak`); as long as that folder is untouched, the same code resumes the same game.
 12. Confirm: no seat is duplicated, no bot moves twice for one roll, the map did not change.
 13. Play to a winner if there is time; the scoreboard shows.
 
 Record the result in `HANDOFF.md` (date, devices used, commit, anything odd).
+Afterwards copy `.catan-home-data/` somewhere safe if you want to keep the game.
 If all of it held, the commit can be tagged `v0.6.0-home.1`.
 
 ## Known limits of this build (accepted for v0.1)
