@@ -24,8 +24,9 @@ API reported it **public** on 2026-09-13 — not changed by the agent) · local:
 Also done outside the phase list: client server-URL derives from the
 page's hostname (LAN play), `.env.example`, `HANDOFF.md`.
 
-**142 tests** across the workspace (engine 98, rulesets 14, client 3,
-cli 12, server 15). `pnpm typecheck` clean in all 6 packages.
+**171 tests** across the workspace (engine 104, rulesets 24, client 3,
+cli 16, server 24; `@catan/bot` has none of its own). `pnpm typecheck` clean
+in all 7 packages.
 
 ### Cities & Knights plan (Phase 5, in slices — owner chose "full C&K, in slices")
 
@@ -70,13 +71,78 @@ cli 12, server 15). `pnpm typecheck` clean in all 6 packages.
 4. metropolises (level 4/5), city walls, merchant
 5. client UI for all of the above (slice 1's UI is already in)
 
-## Next track (owner decision after slice 2): HOME STABLE v0.1
+## HOME STABLE v0.1 — built, release candidate for `v0.6.0-home.1` (NOT tagged yet)
 
-Cities & Knights is **paused after slice 2**. Before slice 3, build the playable
-home release described in `docs/planning/`: 5 seats, 3 humans + 2 server-controlled
-bots, large map preset (37 hexes, 3 opening placements each), LAN launcher,
-version surface, tagged known-good build, real Wi-Fi smoke test. Base-game rules
-(plus stable house rules) for that release — not C&K.
+Cities & Knights is **paused after slice 2**. The home build is implemented and
+passes every automated gate plus a full local restart drill; the **real Wi-Fi
+smoke test in `HOME_STABLE_CHECKLIST.md` is the owner's** and gates the tag.
+
+What exists (all in the same commit series):
+- **Setup as data** — `RuleSet.setup: SetupRules { sequence: "snake", rounds: SetupRound[],
+  grantStartingResourcesFromRound }`; `GameState.setupRound`. Rounds snake 0..N-1, N-1..0,
+  0..N-1…; a placement grants from the configured (1-based) round. Absent = the classic
+  two rounds (C&K's city-as-second-placement flag still drives it). The legacy four phase
+  names are kept (round 0 → `…1`, later rounds → `…2`), so nothing downstream changed.
+- **Piece limits as data** — `RuleSet.pieceLimits` (`pieceLimitsOf(ruleSet)`); base stays 15/5/4.
+- **Radius-scaled base board** — `generateBaseBoardLayout(rng, radius)` now scales the
+  resource pool, tokens and ports to the board (it previously left hexes 19+ with
+  `undefined` resources at radius 3 — a latent bug, now tested).
+- **mapgen-v1** (`packages/rulesets/src/mapgen.ts`) — `generateBoard({seed, radius, seats,
+  placementsPerSeat, candidates})`: candidate *i* is the base generator seeded from
+  `${seed}|mapgen-v1|${i}`, then a deterministic **repair** that separates touching 6/8
+  tokens (a pure shuffle almost never manages it with eight hot tokens), then a pure
+  evaluator (6/8 adjacency = reject; same-resource clusters penalised; ≥ seats×placements
+  independent viable opening spots required; per-resource pip share). Best total wins,
+  ties → lowest index. `RuleSet.mapgen: { seed, generationVersion, candidateIndex, score }`
+  travels with the layout; the layout itself is persisted, never regenerated.
+- **Preset `home-large-5` — "Home Large — 5 Seats"** (`presets/homeLarge.ts`): base rules,
+  radius 3 (37 hexes), 3 settlement rounds granting on the 3rd, **13 VP (configurable via
+  `createRuleSet(id, { victoryPoints })`)**, `maxPlayers: 5`, piece limits 18/7/5
+  (provisional — 5 settlements + 4 cities can't reach 13 with three openings).
+  Registry entries carry `seats: {min,max}`; the server refuses a start outside that range.
+- **`@catan/bot`** — `chooseAction` (moved out of `apps/cli`) and `nextActor(state)`
+  (discard → downgrade → trade target → current player), shared by CLI and server.
+- **Bot seats** — `Seat.kind: "human" | "bot"`, host-only `addBot`/`removeBot` in the lobby
+  (`MAX_PLAYERS` is now 5). `CatanRoom` runs a single re-armed timer: when `nextActor` is a
+  bot and ≥1 human is connected, it calls `chooseAction` and pushes the result through the
+  **same** `applyEnvelope` → persist → broadcast path as a human intent. Each bot's RNG is
+  persisted on its seat (`StoredSeat.botRng`), so a restart replays the same choices; bots
+  stay idle until a human reconnects (no ghost games, no duplicate loops).
+- **Build identity** — `BuildInfo { appVersion, gitCommit, buildProfile, mapGenerationVersion }`
+  read at server start (root `package.json` version = `0.6.0-home.1`, `git rev-parse`,
+  `BUILD_PROFILE`), printed at startup, in every `RoomSnapshot` (lobby diagnostics line,
+  with the persistence path), and stored in each `GameRecord.build`.
+- **Launcher** — `pnpm run home` (`scripts/home.mjs`; plain `pnpm home` is a pnpm
+  built-in): checks both ports (clear exit-1 message if taken), starts server + client
+  bound to `0.0.0.0`, `CATAN_DATA_DIR=.catan-home-data`, `BUILD_PROFILE=home-lan`, prints
+  the LAN URL box and the build line; Ctrl+C stops both process groups (SIGTERM, then
+  SIGKILL after 4 s) and nothing else.
+- **FileStore hardening** — overlapping saves used to share one temp file and could tear
+  the record (found live: bots persisting every ~700 ms while a client left). Writes are
+  now serialised per room with unique temp names, and the previous good file is kept as
+  `.bak`, which `load` falls back to (loudly) if the main file is unreadable.
+
+Live drill on this machine (2026-09-13, three browser tabs + launcher):
+5-seat lobby, 3 humans + 2 bots, Home Large started, humans placed via the UI, bots
+placed on their own; `pnpm run home` Ctrl+C'd mid-setup and relaunched; all tabs
+reconnected automatically to the identical game (one tab was refreshed while the server
+was down and came back too); play continued and the bots completed round 3 on the
+restarted server; the record on disk matched. LAN reachability was verified earlier by
+`curl` over the LAN IP (the in-app browser blocks non-localhost origins).
+
+**Known limitations (v0.1):**
+- The Wi-Fi smoke test with real devices has **not** been run — that is the tag gate.
+- 13 VP and the 18/7/5 piece limits are provisional (MAP_GENERATOR_DESIGN.md §11).
+- Bots: same simple policy as the CLI — no trading with humans (they decline offers), no
+  road/expansion planning beyond "open a settlement spot", setup picks one best vertex
+  at a time (no multi-placement plan), no C&K knight strategy. Always legal.
+- Bots wait while no human is connected; if the last human leaves mid-game the game
+  simply pauses.
+- Port placement on the 37-hex coast is even spacing with a cycled type pattern (11
+  ports), not an official layout. No islands / custom masks / 61-hex.
+- Absent-player rule unchanged (the game waits).
+- Client UI is verified manually; only `deriveServerUrl` has unit tests.
+- No packaged binary: `pnpm run home` needs Node + pnpm on the host laptop.
 
 ## Future workstreams — planning documents (read before starting either)
 
