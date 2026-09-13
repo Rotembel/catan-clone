@@ -1,0 +1,28 @@
+{
+  "name": "@catan/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite-node --watch src/index.ts",
+    "start": "vite-node src/index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@catan/engine": "workspace:*",
+    "@catan/rulesets": "workspace:*",
+    "@catan/shared": "workspace:*",
+    "@colyseus/core": "^0.16.0",
+    "@colyseus/schema": "^3.0.0",
+    "@colyseus/ws-transport": "^0.16.0"
+  },
+  "devDependencies": {
+    "@colyseus/testing": "~0.16.3",
+    "@colyseus/tools": "~0.16.20",
+    "@types/node": "^22.9.0",
+    "colyseus.js": "~0.16.22",
+    "vite-node": "^2.1.4",
+    "vitest": "^2.1.4"
+  }
+}

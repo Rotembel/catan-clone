@@ -24,13 +24,14 @@ not code rewrites. Stability and correctness come before any new feature. Full d
 
 ## Commands
 ```bash
-pnpm install        # from repo root
-pnpm test           # Vitest — must be green before any commit
-pnpm --filter engine test
-pnpm --filter client dev
-pnpm --filter server dev
+pnpm install                        # from repo root
+pnpm test                           # Vitest, every package — must be green before any commit
+pnpm typecheck                      # tsc --noEmit, every package
+pnpm --filter @catan/engine test
+pnpm --filter @catan/cli play       # bot-vs-bot game through the engine (Phase 1 harness)
+pnpm --filter @catan/server dev     # Colyseus, ws://localhost:2567
+pnpm --filter @catan/client dev     # Vite, http://localhost:5173 (LAN-reachable)
 ```
-(Wire these up in Phase 0 if they don't exist yet.)
 
 Git, from Phase 0:
 ```bash
