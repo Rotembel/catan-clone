@@ -252,6 +252,23 @@ export function Board({ game, ruleSet, targets, onVertex, onEdge, onHex }: Board
         );
       })}
 
+      {/* knights (Cities & Knights) */}
+      {scene.vertices.map(({ id, p }) => {
+        const k = game.board.knights[id];
+        if (!k) return null;
+        const color = PLAYER_COLORS[k.playerId] ?? "#000";
+        const r = HEX * 0.24;
+        return (
+          <g key={`k-${id}`} opacity={k.active ? 1 : 0.55}>
+            <circle cx={p.x} cy={p.y} r={r} fill={color} stroke="#1f2430" strokeWidth={2} />
+            <text x={p.x} y={p.y + 1} textAnchor="middle" dominantBaseline="middle" fontSize={r * 1.2} fontWeight={700} fill="#fff">
+              {k.level}
+            </text>
+            <title>{`${k.active ? "Active" : "Inactive"} knight, level ${k.level}`}</title>
+          </g>
+        );
+      })}
+
       {/* vertex targets */}
       {scene.vertices.map(({ id, p }) => {
         if (!targets.vertices.has(id)) return null;

@@ -1,5 +1,6 @@
 import type { GameState, RuleSet } from "@catan/shared";
 import { refresh, requireCurrentPlayer, requirePhase } from "./helpers.js";
+import { resetKnightTurnFlags } from "./knights.js";
 
 export function endTurn(state: GameState, ruleSet: RuleSet, playerId: number): GameState {
   requirePhase(state, "mainTurn");
@@ -7,7 +8,7 @@ export function endTurn(state: GameState, ruleSet: RuleSet, playerId: number): G
 
   const nextIndex = (state.turn.current + 1) % state.players.length;
   const next: GameState = {
-    ...state,
+    ...resetKnightTurnFlags(state),
     dice: undefined,
     pendingTrade: undefined,
     // Per-turn dev card restrictions reset for everyone.

@@ -15,6 +15,12 @@ export type CardCounts = Partial<Record<Card, number>>;
 /** Cities & Knights city-improvement tracks. */
 export type ImprovementTrack = "trade" | "politics" | "science";
 
+/** Cities & Knights event die faces: three barbarian ships and one city gate per track. */
+export type EventDieFace = "barbarian" | "trade" | "politics" | "science";
+
+/** Knight strength: 1 basic, 2 strong, 3 mighty. */
+export type KnightLevel = 1 | 2 | 3;
+
 /** Opaque canonical id for a board hex — see engine/board for how these are derived. */
 export type HexId = string;
 /** Opaque canonical id for a settlement/city spot (a hex-grid vertex). */
@@ -86,6 +92,20 @@ export interface CitiesAndKnightsRules {
   setupSecondPlacementIsCity: boolean;
   /** How many of each commodity the bank starts with. */
   commodityBankPerType: number;
+  /** The six faces of the event die (slice 2). */
+  eventDie: EventDieFace[];
+  /** Barbarian ship steps before an attack lands. */
+  barbarianTrackLength: number;
+  /** Knight costs, in resources. */
+  knightCosts: {
+    build: Partial<Record<Resource, number>>;
+    activate: Partial<Record<Resource, number>>;
+    promote: Partial<Record<Resource, number>>;
+  };
+  /** Knights a player may have at each level. */
+  knightsPerLevel: number;
+  /** Politics level required to promote a knight to mighty (the Fortress). */
+  fortressLevel: number;
 }
 
 export interface RuleSet {
@@ -113,6 +133,8 @@ export type TurnPhase =
   | "discard"
   | "mainTurn"
   | "moveRobberAfterSeven"
+  /** Barbarians won and players in `pendingDowngrades` must choose which city to lose. */
+  | "barbarianDowngrade"
   | "gameOver";
 
 export interface Player {
@@ -135,6 +157,16 @@ export interface Player {
   commodities: Record<Commodity, number>;
   /** Cities & Knights improvement level per track (0-5); all zero in a base game. */
   improvements: Record<ImprovementTrack, number>;
+  /** Defender of Catan awards held (1 VP each); always 0 in a base game. */
+  defenderOfCatan: number;
+}
+
+export interface Knight {
+  playerId: number;
+  level: KnightLevel;
+  active: boolean;
+  /** Activated this turn — may not move until the next turn. Cleared on endTurn. */
+  activatedThisTurn: boolean;
 }
 
 export interface Building {
@@ -147,6 +179,8 @@ export interface BoardState {
   /** Edge -> the player who built the road there. */
   roads: Partial<Record<EdgeId, number>>;
   robberHex: HexId;
+  /** Cities & Knights knights, by vertex; always empty in a base game. */
+  knights: Partial<Record<VertexId, Knight>>;
 }
 
 export interface TradeOffer {
@@ -175,6 +209,12 @@ export interface GameState {
   pendingTrade?: TradeOffer;
   /** Player ids that still owe a discard during the "discard" phase. */
   pendingDiscards?: number[];
+  /** Cities & Knights: how far the barbarian ship has sailed (0 = start); always 0 in a base game. */
+  barbarianPosition: number;
+  /** Cities & Knights: the event die face of the current roll. */
+  eventDie?: EventDieFace;
+  /** Players who lost the barbarian attack and hold several cities: they choose which to lose. */
+  pendingDowngrades?: number[];
   /**
    * Current holders of the two bonus-VP awards. These are *state*, not
    * derived values: the official tie rule ("you only take it by strictly
@@ -211,6 +251,13 @@ export type Action =
   | { type: "discardCards"; discard: CardCounts }
   /** Cities & Knights: buy the next level on an improvement track. */
   | { type: "buildImprovement"; track: ImprovementTrack }
+  /** Cities & Knights knights (slice 2). */
+  | { type: "buildKnight"; vertex: VertexId }
+  | { type: "activateKnight"; vertex: VertexId }
+  | { type: "promoteKnight"; vertex: VertexId }
+  | { type: "moveKnight"; from: VertexId; to: VertexId }
+  /** Cities & Knights: after a lost barbarian attack, which of your cities becomes a settlement. */
+  | { type: "downgradeCity"; vertex: VertexId }
   | { type: "endTurn" };
 
 // playDevCard payloads, keyed by cardId — kept separate from the Action

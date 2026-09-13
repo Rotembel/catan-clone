@@ -1,7 +1,8 @@
 // Cities & Knights (SPEC.md §7 Phase 5), delivered in slices. This is the
 // base game plus the expansion block; each slice adds fields to that block
 // and the engine branches on them. Slice 1: commodities and city
-// improvements (second placement is a city; 13 points to win).
+// improvements (second placement is a city; 13 points to win). Slice 2:
+// the event die, the barbarian track and attack, and knights as pieces.
 
 import type { CitiesAndKnightsRules, RuleSet } from "@catan/shared";
 import type { RngState } from "@catan/engine";
@@ -16,6 +17,15 @@ export const CITIES_AND_KNIGHTS_RULES: CitiesAndKnightsRules = {
   commodityPortLevel: 3,
   setupSecondPlacementIsCity: true,
   commodityBankPerType: 12,
+  eventDie: ["barbarian", "barbarian", "barbarian", "trade", "politics", "science"],
+  barbarianTrackLength: 7,
+  knightCosts: {
+    build: { sheep: 1, ore: 1 },
+    activate: { wheat: 1 },
+    promote: { sheep: 1, ore: 1 },
+  },
+  knightsPerLevel: 2,
+  fortressLevel: 3,
 };
 
 export function createCitiesAndKnightsRuleSet(

@@ -31,6 +31,7 @@ export function createPlayer(id: number, name: string): Player {
     victoryPoints: 0,
     commodities: emptyCommodities(),
     improvements: emptyImprovements(),
+    defenderOfCatan: 0,
   };
 }
 
@@ -42,10 +43,13 @@ export function normalizeState(state: GameState): GameState {
   return {
     ...state,
     commodityBank: { ...emptyCommodities(), ...(state.commodityBank ?? {}) },
+    barbarianPosition: state.barbarianPosition ?? 0,
+    board: { ...state.board, knights: state.board.knights ?? {} },
     players: state.players.map((p) => ({
       ...p,
       commodities: { ...emptyCommodities(), ...(p.commodities ?? {}) },
       improvements: { ...emptyImprovements(), ...(p.improvements ?? {}) },
+      defenderOfCatan: p.defenderOfCatan ?? 0,
     })),
   };
 }
@@ -77,10 +81,12 @@ export function createInitialState(ruleSet: RuleSet, options: CreateGameOptions)
       buildings: {},
       roads: {},
       robberHex,
+      knights: {},
     },
     devDeck,
     bank,
     commodityBank,
+    barbarianPosition: 0,
     rngState: rngAfterDeck,
   };
 }

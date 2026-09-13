@@ -15,3 +15,5 @@ export { PIECE_LIMITS, pieceCounts, IllegalActionError } from "./reducers/helper
 export { DISCARD_THRESHOLD, discardCountFor } from "./reducers/dice.js";
 export { stealTargetsAt } from "./reducers/robber.js";
 export { buildImprovement, canBuildImprovement, maxImprovementLevel, nextImprovementCost } from "./reducers/improve.js";
+export { knightCounts, legalKnightVertices, knightReachableVertices } from "./reducers/knights.js";
+export { knightStrength, barbarianStrength, cityVertices } from "./reducers/barbarians.js";

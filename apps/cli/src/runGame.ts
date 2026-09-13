@@ -30,6 +30,8 @@ export interface GameResult {
 function actorFor(state: GameState): number {
   const pending = state.pendingDiscards ?? [];
   if (pending.length > 0) return pending[0]!;
+  const downgrades = state.pendingDowngrades ?? [];
+  if (downgrades.length > 0) return downgrades[0]!;
   if (state.pendingTrade?.toPlayerId !== undefined) return state.pendingTrade.toPlayerId;
   return state.players[state.turn.current]!.id;
 }

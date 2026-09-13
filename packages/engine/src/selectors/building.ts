@@ -5,9 +5,9 @@ import type { EdgeId, GameState, RuleSet, VertexId } from "@catan/shared";
 import type { BoardGeometry } from "../board/adjacency.js";
 import { getGeometry } from "../geometryCache.js";
 
-/** No building stands on this vertex. */
+/** Nothing stands on this vertex — no building and (Cities & Knights) no knight. */
 export function isVertexFree(state: GameState, vertex: VertexId): boolean {
-  return state.board.buildings[vertex] === undefined;
+  return state.board.buildings[vertex] === undefined && state.board.knights[vertex] === undefined;
 }
 
 /**
@@ -36,12 +36,14 @@ export function playerHasRoadAt(
 
 /**
  * A vertex is "blocked" for a player's road network if an *opponent's*
- * building sits on it — roads can't be built through, or counted through,
- * an enemy settlement.
+ * building — or, in Cities & Knights, an opponent's knight — sits on it:
+ * roads can't be built through, or counted through, an enemy piece.
  */
 export function isVertexBlockedFor(state: GameState, vertex: VertexId, playerId: number): boolean {
   const building = state.board.buildings[vertex];
-  return building !== undefined && building.playerId !== playerId;
+  if (building !== undefined && building.playerId !== playerId) return true;
+  const knight = state.board.knights[vertex];
+  return knight !== undefined && knight.playerId !== playerId;
 }
 
 export interface SettlementOptions {

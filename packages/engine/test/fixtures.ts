@@ -52,6 +52,11 @@ export const TEST_CK_RULES: CitiesAndKnightsRules = {
   commodityPortLevel: 3,
   setupSecondPlacementIsCity: true,
   commodityBankPerType: 12,
+  eventDie: ["barbarian", "barbarian", "barbarian", "trade", "politics", "science"],
+  barbarianTrackLength: 7,
+  knightCosts: { build: { sheep: 1, ore: 1 }, activate: { wheat: 1 }, promote: { sheep: 1, ore: 1 } },
+  knightsPerLevel: 2,
+  fortressLevel: 3,
 };
 
 export interface TestRuleSetOptions {
@@ -157,6 +162,29 @@ export function withBuilding(
   return {
     ...state,
     board: { ...state.board, buildings: { ...state.board.buildings, [vertex]: { playerId, kind } } },
+  };
+}
+
+export function withKnight(
+  state: GameState,
+  vertex: VertexId,
+  playerId: number,
+  options: { level?: 1 | 2 | 3; active?: boolean; activatedThisTurn?: boolean } = {}
+): GameState {
+  return {
+    ...state,
+    board: {
+      ...state.board,
+      knights: {
+        ...state.board.knights,
+        [vertex]: {
+          playerId,
+          level: options.level ?? 1,
+          active: options.active ?? false,
+          activatedThisTurn: options.activatedThisTurn ?? false,
+        },
+      },
+    },
   };
 }
 

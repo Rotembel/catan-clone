@@ -44,6 +44,16 @@ function describe(envelope: ActionEnvelope, state: GameState): string {
       return `${name} ${action.accept ? "accepts" : "declines"} a trade`;
     case "buildImprovement":
       return `${name} improves ${action.track}`;
+    case "buildKnight":
+      return `${name} builds a knight`;
+    case "activateKnight":
+      return `${name} activates a knight`;
+    case "promoteKnight":
+      return `${name} promotes a knight`;
+    case "moveKnight":
+      return `${name} moves a knight`;
+    case "downgradeCity":
+      return `${name} loses a city to the barbarians`;
     case "endTurn":
       return `${name} ends their turn`;
   }

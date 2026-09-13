@@ -8,6 +8,7 @@ export function publicVictoryPoints(state: GameState, playerId: number): number 
   }
   if (state.longestRoadPlayerId === playerId) vp += 2;
   if (state.largestArmyPlayerId === playerId) vp += 2;
+  vp += state.players.find((p) => p.id === playerId)?.defenderOfCatan ?? 0;
   return vp;
 }
 

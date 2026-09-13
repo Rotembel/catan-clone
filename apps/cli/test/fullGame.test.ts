@@ -121,11 +121,15 @@ describe("a full base game", () => {
     expect(state.board.robberHex).toBe(ruleSet.board.hexes.find((h) => h.resource === "desert")!.id);
   });
 
-  it.each(SEEDS)("Cities & Knights (slice 1) finishes at 13 points with cards conserved (seed %s)", (seed) => {
+  it.each(SEEDS)("Cities & Knights (slices 1-2) finishes at 13 points with cards conserved (seed %s)", (seed) => {
     const startingResources = 19 * RESOURCES.length;
     const startingCommodities = 12 * COMMODITIES.length;
     let improvementsBuilt = 0;
+    let knightsBuilt = 0;
+    let attacks = 0;
     let commoditiesSeen = false;
+    let checkedSetupCities = false;
+    let lastShip = 0;
 
     const result = runGame({
       seed,
@@ -133,7 +137,24 @@ describe("a full base game", () => {
       onAction: (envelope, state, ruleSet) => {
         assertInvariants(state, ruleSet, startingResources, startingCommodities);
         if (envelope.action.type === "buildImprovement") improvementsBuilt++;
+        if (envelope.action.type === "buildKnight") knightsBuilt++;
         if (state.players.some((p) => totalCommodities(p.commodities) > 0)) commoditiesSeen = true;
+        // Everyone leaves setup with a city (the second placement).
+        if (!checkedSetupCities && !state.turn.phase.startsWith("setup")) {
+          for (const p of state.players) expect(pieceCounts(state, p.id).cities).toBe(1);
+          checkedSetupCities = true;
+        }
+        // The ship only ever steps forward by one, or sails home after an attack.
+        expect(state.barbarianPosition).toBeLessThan(ruleSet.citiesAndKnights!.barbarianTrackLength);
+        if (state.barbarianPosition < lastShip) attacks++;
+        else expect(state.barbarianPosition - lastShip).toBeLessThanOrEqual(1);
+        lastShip = state.barbarianPosition;
+        // Knights only ever stand on vertices of this board, never on a building.
+        for (const [v, k] of Object.entries(state.board.knights)) {
+          if (!k) continue;
+          expect(getGeometry(ruleSet.board).vertexHexes.has(v)).toBe(true);
+          expect(state.board.buildings[v]).toBeUndefined();
+        }
       },
     });
 
@@ -141,10 +162,12 @@ describe("a full base game", () => {
     expect(result.winner).toBeDefined();
     expect(result.ruleSet.victoryPoints).toBe(13);
     expect(totalVictoryPoints(result.state, result.ruleSet, result.winner!)).toBeGreaterThanOrEqual(13);
-    // The expansion actually happened: cities produced commodities and someone spent them.
+    expect(checkedSetupCities).toBe(true);
+    // The expansion actually happened: commodities flowed, improvements and
+    // knights were bought, and the barbarians landed at least once.
     expect(commoditiesSeen).toBe(true);
     expect(improvementsBuilt).toBeGreaterThan(0);
-    // Everyone started with a city.
-    for (const p of result.state.players) expect(pieceCounts(result.state, p.id).cities).toBeGreaterThanOrEqual(1);
+    expect(knightsBuilt).toBeGreaterThan(0);
+    expect(attacks).toBeGreaterThan(0);
   });
 });

@@ -127,6 +127,12 @@ export function chooseAction(
   const discards = ofType(options, "discardCards");
   if (discards.length > 0) return { action: discards[0], rng };
 
+  // Cities & Knights: a lost barbarian attack — give up the lowest-value city.
+  const downgrades = ofType(options, "downgradeCity");
+  if (downgrades.length > 0) {
+    return { action: bestBy(downgrades, (a) => -vertexValue(state, ruleSet, a.vertex)), rng };
+  }
+
   const responses = ofType(options, "respondTrade");
   if (responses.length > 0) {
     return { action: responses.find((r) => !r.accept) ?? responses[0], rng };
@@ -179,6 +185,15 @@ export function chooseAction(
   // Cities & Knights: improvements are the only use for commodities.
   const improvements = ofType(options, "buildImprovement");
   if (improvements.length > 0) return { action: improvements[0], rng };
+
+  // Cities & Knights, minimal defence: keep one knight, and keep it active.
+  // (No promotion or movement strategy yet — see HANDOFF.md.)
+  const activations = ofType(options, "activateKnight");
+  if (activations.length > 0) return { action: activations[0], rng };
+  const knightBuilds = ofType(options, "buildKnight");
+  if (knightBuilds.length > 0 && Object.values(state.board.knights).filter((k) => k?.playerId === playerId).length === 0) {
+    return { action: bestBy(knightBuilds, (a) => vertexValue(state, ruleSet, a.vertex)), rng };
+  }
 
   const cities = ofType(options, "buildCity");
   if (cities.length > 0) {

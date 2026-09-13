@@ -11,8 +11,9 @@ import {
   splitCards,
   totalAllCards,
 } from "../resources.js";
-import { rollTwoDice } from "../rng.js";
+import { nextInt, rollTwoDice } from "../rng.js";
 import { productionForRoll } from "../selectors/production.js";
+import { advanceBarbarians } from "./barbarians.js";
 import { illegal, refresh, requireCurrentPlayer, requirePhase } from "./helpers.js";
 
 /** Hand size (resources + commodities) above which a 7 forces a discard. */
@@ -23,9 +24,28 @@ export function rollDice(state: GameState, ruleSet: RuleSet, playerId: number): 
   requireCurrentPlayer(state, playerId);
 
   const { dice, state: rngState } = rollTwoDice(state.rngState);
-  const roll = dice[0] + dice[1];
+  let next: GameState = { ...state, dice, rngState, eventDie: undefined };
 
-  let next: GameState = { ...state, dice, rngState };
+  // Cities & Knights: the event die rolls with the production dice, and a
+  // barbarian face is resolved *before* production. The base game draws
+  // nothing extra from the RNG, so its rolls are unchanged.
+  const ck = ruleSet.citiesAndKnights;
+  if (ck) {
+    const { value, state: afterEvent } = nextInt(next.rngState, ck.eventDie.length);
+    const face = ck.eventDie[value]!;
+    next = { ...next, rngState: afterEvent, eventDie: face };
+    if (face === "barbarian") next = advanceBarbarians(next, ruleSet);
+    if (next.turn.phase === "barbarianDowngrade") return refresh(next, ruleSet);
+  }
+
+  return resolveRoll(next, ruleSet);
+}
+
+/** The production half of a roll: a 7, or a payout. `state.dice` must be set. */
+export function resolveRoll(state: GameState, ruleSet: RuleSet): GameState {
+  if (!state.dice) illegal("no dice to resolve");
+  const roll = state.dice[0] + state.dice[1];
+  let next: GameState = state;
 
   if (roll === 7) {
     const owing = next.players.filter((p) => handSize(p) > DISCARD_THRESHOLD).map((p) => p.id);

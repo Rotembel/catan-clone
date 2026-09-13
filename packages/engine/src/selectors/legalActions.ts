@@ -11,6 +11,8 @@ import type { Action, Card, CardCounts, GameState, RuleSet } from "@catan/shared
 import { discardCountFor } from "../reducers/dice.js";
 import { PIECE_LIMITS, pieceCounts } from "../reducers/helpers.js";
 import { canBuildImprovement } from "../reducers/improve.js";
+import { cityVertices } from "../reducers/barbarians.js";
+import { knightCounts, knightReachableVertices, legalKnightVertices } from "../reducers/knights.js";
 import { stealTargetsAt } from "../reducers/robber.js";
 import { CARDS, COMMODITIES, IMPROVEMENT_TRACKS, RESOURCES, canAfford, isCommodity } from "../resources.js";
 import {
@@ -138,6 +140,12 @@ export function legalActions(state: GameState, ruleSet: RuleSet, playerId: numbe
       break;
     }
 
+    case "barbarianDowngrade": {
+      if (!(state.pendingDowngrades ?? []).includes(playerId)) break;
+      for (const vertex of cityVertices(state, playerId)) actions.push({ type: "downgradeCity", vertex });
+      break;
+    }
+
     case "mainTurn": {
       if (!isCurrent) break;
       actions.push({ type: "endTurn" });
@@ -171,6 +179,34 @@ export function legalActions(state: GameState, ruleSet: RuleSet, playerId: numbe
       for (const track of IMPROVEMENT_TRACKS) {
         if (canBuildImprovement(state, ruleSet, playerId, track)) {
           actions.push({ type: "buildImprovement", track });
+        }
+      }
+
+      const ck = ruleSet.citiesAndKnights;
+      if (ck) {
+        const knights = knightCounts(state, playerId);
+        if (canAfford(player.resources, ck.knightCosts.build) && knights[1] < ck.knightsPerLevel) {
+          for (const vertex of legalKnightVertices(state, ruleSet, playerId)) {
+            actions.push({ type: "buildKnight", vertex });
+          }
+        }
+        for (const [vertex, knight] of Object.entries(state.board.knights)) {
+          if (!knight || knight.playerId !== playerId) continue;
+          if (!knight.active && canAfford(player.resources, ck.knightCosts.activate)) {
+            actions.push({ type: "activateKnight", vertex });
+          }
+          if (knight.level < 3 && canAfford(player.resources, ck.knightCosts.promote)) {
+            const level = (knight.level + 1) as 2 | 3;
+            const fortressOk = level < 3 || player.improvements.politics >= ck.fortressLevel;
+            if (fortressOk && knights[level] < ck.knightsPerLevel) {
+              actions.push({ type: "promoteKnight", vertex });
+            }
+          }
+          if (knight.active && !knight.activatedThisTurn) {
+            for (const to of knightReachableVertices(state, ruleSet, playerId, vertex)) {
+              actions.push({ type: "moveKnight", from: vertex, to });
+            }
+          }
         }
       }
 

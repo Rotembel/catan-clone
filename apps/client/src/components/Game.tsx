@@ -114,6 +114,10 @@ export function Game({ net, game, ruleSet, me }: Props) {
     [legal]
   );
   const robberMoves = useMemo(() => groupByHex(legal, "moveRobber"), [legal]);
+  const downgradeVertices = useMemo(
+    () => new Set(legal.flatMap((a) => (a.type === "downgradeCity" ? [a.vertex] : []))),
+    [legal]
+  );
   const knightMoves = useMemo(() => groupByHex(legal, "knight"), [legal]);
 
   const canPlay = (cardId: string) =>
@@ -145,16 +149,17 @@ export function Game({ net, game, ruleSet, me }: Props) {
         return none;
       case "idle":
         return {
-          vertices: new Set([...settlementVertices, ...cityVertices]),
+          vertices: new Set([...settlementVertices, ...cityVertices, ...downgradeVertices]),
           edges: roadEdges,
           hexes: new Set(robberMoves.keys()),
           selectedEdges: new Set<EdgeId>(),
         };
     }
-  }, [mode, over, knightMoves, roadBuildingEdges, settlementVertices, cityVertices, roadEdges, robberMoves]);
+  }, [mode, over, knightMoves, roadBuildingEdges, settlementVertices, cityVertices, roadEdges, robberMoves, downgradeVertices]);
 
   const onVertex = (v: VertexId) => {
-    if (cityVertices.has(v)) sendAction({ type: "buildCity", vertex: v });
+    if (downgradeVertices.has(v)) sendAction({ type: "downgradeCity", vertex: v });
+    else if (cityVertices.has(v)) sendAction({ type: "buildCity", vertex: v });
     else if (settlementVertices.has(v)) sendAction({ type: "buildSettlement", vertex: v });
   };
 
@@ -236,6 +241,14 @@ export function Game({ net, game, ruleSet, me }: Props) {
                 </span>
               ))}
             </div>
+            {ruleSet.citiesAndKnights && (
+              <p className="muted" data-testid="barbarians">
+                Barbarians {game.barbarianPosition}/{ruleSet.citiesAndKnights.barbarianTrackLength}
+                {game.eventDie ? ` · event die: ${game.eventDie === "barbarian" ? "⛵ barbarians" : `🏰 ${game.eventDie}`}` : ""}
+                {" · "}your knights {Object.values(game.board.knights).filter((k) => k?.playerId === me).length}
+                {player.defenderOfCatan > 0 ? ` · Defender of Catan ×${player.defenderOfCatan}` : ""}
+              </p>
+            )}
             {ruleSet.citiesAndKnights && (
               <div className="resources" data-testid="commodities">
                 {COMMODITIES.map((c) => (
@@ -419,6 +432,12 @@ function statusText(game: GameState, ruleSet: RuleSet, me: number, mode: Mode): 
   const mine = current.id === me;
   const who = mine ? "You" : current.name;
 
+  if ((game.pendingDowngrades ?? []).length > 0) {
+    const names = game.pendingDowngrades!.map((id) => (id === me ? "you" : game.players.find((p) => p.id === id)?.name)).join(", ");
+    return game.pendingDowngrades!.includes(me)
+      ? "The barbarians won — click one of your cities to give up."
+      : `The barbarians won — waiting for ${names} to give up a city.`;
+  }
   if ((game.pendingDiscards ?? []).length > 0) {
     const names = game.pendingDiscards!.map((id) => (id === me ? "you" : game.players.find((p) => p.id === id)?.name)).join(", ");
     return `A 7! Waiting for ${names} to discard.`;
@@ -446,6 +465,8 @@ function statusText(game: GameState, ruleSet: RuleSet, me: number, mode: Mode): 
       return mine ? "Your turn — build, trade, or end your turn." : `${who}'s turn.`;
     case "discard":
       return "Discarding…";
+    case "barbarianDowngrade":
+      return "The barbarians won…";
     case "gameOver":
       return "Game over.";
   }
