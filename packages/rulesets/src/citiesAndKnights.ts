@@ -44,8 +44,17 @@ export const CITIES_AND_KNIGHTS_RULES: CitiesAndKnightsRules = {
     { id: "alchemist", label: "Alchemist", category: "science", count: 2, timing: "beforeRoll" },
     { id: "smith", label: "Smith", category: "science", count: 2, timing: "mainTurn" },
     { id: "printer", label: "Printer", category: "science", count: 1, timing: "immediate" },
+    // slice 4
+    { id: "merchant", label: "Merchant", category: "trade", count: 6, timing: "mainTurn" },
+    { id: "masterMerchant", label: "Master Merchant", category: "trade", count: 2, timing: "mainTurn" },
+    { id: "engineer", label: "Engineer", category: "science", count: 1, timing: "mainTurn" },
+    { id: "medicine", label: "Medicine", category: "science", count: 2, timing: "mainTurn" },
+    { id: "crane", label: "Crane", category: "science", count: 2, timing: "mainTurn" },
   ],
   progressHandLimit: 4,
+  metropolis: { claimLevel: 4, takeLevel: 5, victoryPoints: 2 },
+  wall: { cost: { brick: 2 }, perPlayer: 3, discardBonus: 2 },
+  merchantVictoryPoints: 1,
 };
 
 export function createCitiesAndKnightsRuleSet(

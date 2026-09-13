@@ -53,8 +53,9 @@ export function normalizeState(state: GameState): GameState {
     setupRound:
       state.setupRound ??
       (state.turn.phase.startsWith("setup") ? (state.turn.phase.endsWith("1") ? 0 : 1) : 2),
-    board: { ...state.board, knights: state.board.knights ?? {}, tokenOverrides: state.board.tokenOverrides ?? {} },
+    board: { ...state.board, knights: state.board.knights ?? {}, tokenOverrides: state.board.tokenOverrides ?? {}, walls: state.board.walls ?? {} },
     progressDecks: state.progressDecks ?? emptyProgressDecks(),
+    metropolises: state.metropolises ?? {},
     players: state.players.map((p) => ({
       ...p,
       commodities: { ...emptyCommodities(), ...(p.commodities ?? {}) },
@@ -98,8 +99,10 @@ export function createInitialState(ruleSet: RuleSet, options: CreateGameOptions)
       robberHex,
       knights: {},
       tokenOverrides: {},
+      walls: {},
     },
     progressDecks,
+    metropolises: {},
     devDeck,
     bank,
     commodityBank,

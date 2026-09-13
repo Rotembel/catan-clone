@@ -141,6 +141,12 @@ export function chooseAction(
   const progressDiscards = ofType(options, "discardProgressCard");
   if (progressDiscards.length > 0) return { action: progressDiscards[0], rng };
 
+  // Cities & Knights: a metropolis to place — on the best-producing city.
+  const metropolis = ofType(options, "placeMetropolis");
+  if (metropolis.length > 0) {
+    return { action: bestBy(metropolis, (a) => vertexValue(state, ruleSet, a.vertex)), rng };
+  }
+
   const responses = ofType(options, "respondTrade");
   if (responses.length > 0) {
     return { action: responses.find((r) => !r.accept) ?? responses[0], rng };
@@ -213,6 +219,30 @@ export function chooseAction(
   }
   const freeRoads = safeCard("roadBuilding");
   if (freeRoads.length > 0) return { action: freeRoads[0], rng };
+  // Slice 4 cards with an obvious payoff: cheaper city, cheaper improvement,
+  // a free wall, the merchant on our best hex, two cards from a leader.
+  for (const id of ["medicine", "crane", "engineer", "masterMerchant"]) {
+    const plays = safeCard(id);
+    if (plays.length > 0) return { action: plays[0], rng };
+  }
+  const merchants = safeCard("merchant");
+  if (merchants.length > 0) {
+    const geometry = getGeometry(ruleSet.board);
+    return {
+      action: bestBy(merchants, (a) => {
+        const hexId = (a.payload as { hex: string }).hex;
+        const hex = ruleSet.board.hexes.find((h) => h.id === hexId);
+        const token = state.board.tokenOverrides[hexId] ?? hex?.numberToken ?? null;
+        void geometry;
+        return token === null ? 0 : (PIPS[token] ?? 0);
+      }),
+      rng,
+    };
+  }
+
+  // Cities & Knights: a wall on a city when we can afford one (raises the discard limit).
+  const walls = ofType(options, "buildWall");
+  if (walls.length > 0) return { action: bestBy(walls, (a) => vertexValue(state, ruleSet, a.vertex)), rng };
 
   // Cities & Knights, minimal defence: keep one knight, and keep it active.
   // (No promotion or movement strategy yet — see HANDOFF.md.)

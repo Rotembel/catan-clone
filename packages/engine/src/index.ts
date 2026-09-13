@@ -24,3 +24,7 @@ export { createProgressDecks, drawProgressCard, progressCardDef, emptyProgressDe
 export { progressCardImpl, PROGRESS_CARD_IMPLS } from "./progress/registry.js";
 export type { ProgressCardImpl } from "./progress/types.js";
 export { effectiveNumberToken } from "./selectors/production.js";
+export { metropolisClaim, metropolisEligibleCities, metropolisVertices, resolveMetropolisClaims } from "./reducers/metropolis.js";
+export { buildWall, canBuildWall, legalWallVertices, wallCount } from "./reducers/walls.js";
+export { discardThresholdFor } from "./reducers/dice.js";
+export { expansionVictoryPoints } from "./selectors/victory.js";

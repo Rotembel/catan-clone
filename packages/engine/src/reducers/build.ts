@@ -3,6 +3,7 @@
 
 import type { EdgeId, GameState, RuleSet, VertexId } from "@catan/shared";
 import { addResources, canAfford, subtractResources } from "../resources.js";
+import { resolveMetropolisClaims } from "./metropolis.js";
 import { legalCityVertices, legalRoadEdges, legalSettlementVertices } from "../selectors/building.js";
 import {
   illegal,
@@ -113,12 +114,18 @@ export function buildCity(
   }
 
   let next = payCost(state, ruleSet, playerId, "city");
-  next = {
-    ...next,
+  next = upgradeToCity(next, ruleSet, playerId, vertex);
+  return refresh(next, ruleSet, playerId);
+}
+
+/** Settlement -> city without charging; an open metropolis claim may land on it. */
+export function upgradeToCity(state: GameState, ruleSet: RuleSet, playerId: number, vertex: VertexId): GameState {
+  const next: GameState = {
+    ...state,
     board: {
-      ...next.board,
-      buildings: { ...next.board.buildings, [vertex]: { playerId, kind: "city" } },
+      ...state.board,
+      buildings: { ...state.board.buildings, [vertex]: { playerId, kind: "city" } },
     },
   };
-  return refresh(next, ruleSet, playerId);
+  return resolveMetropolisClaims(next, ruleSet, playerId);
 }

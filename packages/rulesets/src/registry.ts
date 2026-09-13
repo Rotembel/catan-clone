@@ -47,7 +47,7 @@ export const RULE_SETS: readonly RuleSetInfo[] = [
   {
     id: CITIES_AND_KNIGHTS_ID,
     label: "Cities & Knights (in progress)",
-    description: "Commodities, city improvements, the event die, barbarians, knights and progress cards; second placement is a city; 13 points to win. Metropolises and walls are coming.",
+    description: "Commodities, city improvements, the event die, barbarians, knights, progress cards, metropolises, city walls and the merchant; second placement is a city; 13 points to win.",
     seats: { min: 2, max: 4 },
     create: createCitiesAndKnightsRuleSet,
   },

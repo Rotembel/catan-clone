@@ -75,8 +75,9 @@ type Mode =
   | { kind: "knight" }
   | { kind: "roadBuilding"; edges: EdgeId[] }
   | { kind: "victim"; hex: HexId; victims: number[]; viaKnight: boolean }
-  /** Progress cards that target the board: Bishop (one hex), Inventor (two hexes). */
-  | { kind: "bishop"; hexes: Set<HexId> }
+  /** Progress cards that target the board: one hex (Bishop, Merchant), one vertex (Engineer, Medicine), two hexes (Inventor). */
+  | { kind: "progressHex"; cardId: string; hexes: Set<HexId> }
+  | { kind: "progressVertex"; cardId: string; vertices: Set<VertexId> }
   | { kind: "inventor"; first?: HexId };
 
 type Dialog =
@@ -128,6 +129,8 @@ export function Game({ net, game, ruleSet, me }: Props) {
     () => new Set(legal.flatMap((a) => (a.type === "downgradeCity" ? [a.vertex] : []))),
     [legal]
   );
+  const wallVertices = useMemo(() => new Set(legal.flatMap((a) => (a.type === "buildWall" ? [a.vertex] : []))), [legal]);
+  const metropolisVertexSet = useMemo(() => new Set(legal.flatMap((a) => (a.type === "placeMetropolis" ? [a.vertex] : []))), [legal]);
   const knightMoves = useMemo(() => groupByHex(legal, "knight"), [legal]);
 
   const canPlay = (cardId: string) =>
@@ -144,8 +147,12 @@ export function Game({ net, game, ruleSet, me }: Props) {
   const startProgressCard = (cardId: string) => {
     const payloads = progressPayloads(cardId);
     if (payloads.length === 0) return;
-    if (cardId === "bishop") {
-      setMode({ kind: "bishop", hexes: new Set((payloads as { hex: HexId }[]).map((p) => p.hex)) });
+    if (cardId === "bishop" || cardId === "merchant") {
+      setMode({ kind: "progressHex", cardId, hexes: new Set((payloads as { hex: HexId }[]).map((p) => p.hex)) });
+      return;
+    }
+    if (cardId === "engineer" || cardId === "medicine") {
+      setMode({ kind: "progressVertex", cardId, vertices: new Set((payloads as { vertex: VertexId }[]).map((p) => p.vertex)) });
       return;
     }
     if (cardId === "inventor") {
@@ -179,8 +186,10 @@ export function Game({ net, game, ruleSet, me }: Props) {
     switch (mode.kind) {
       case "knight":
         return { ...none, hexes: new Set(knightMoves.keys()) };
-      case "bishop":
+      case "progressHex":
         return { ...none, hexes: mode.hexes };
+      case "progressVertex":
+        return { ...none, vertices: mode.vertices };
       case "inventor": {
         const hexes = new Set<HexId>();
         for (const p of inventorHexes) {
@@ -198,16 +207,22 @@ export function Game({ net, game, ruleSet, me }: Props) {
         return none;
       case "idle":
         return {
-          vertices: new Set([...settlementVertices, ...cityVertices, ...downgradeVertices]),
+          vertices: new Set([...settlementVertices, ...cityVertices, ...downgradeVertices, ...wallVertices, ...metropolisVertexSet]),
           edges: roadEdges,
           hexes: new Set(robberMoves.keys()),
           selectedEdges: new Set<EdgeId>(),
         };
     }
-  }, [mode, over, knightMoves, roadBuildingEdges, settlementVertices, cityVertices, roadEdges, robberMoves, downgradeVertices, inventorHexes]);
+  }, [mode, over, knightMoves, roadBuildingEdges, settlementVertices, cityVertices, roadEdges, robberMoves, downgradeVertices, inventorHexes, wallVertices, metropolisVertexSet]);
 
   const onVertex = (v: VertexId) => {
-    if (downgradeVertices.has(v)) sendAction({ type: "downgradeCity", vertex: v });
+    if (mode.kind === "progressVertex") {
+      if (mode.vertices.has(v)) sendAction({ type: "playProgressCard", cardId: mode.cardId, payload: { vertex: v } });
+      return;
+    }
+    if (metropolisVertexSet.has(v)) sendAction({ type: "placeMetropolis", vertex: v });
+    else if (downgradeVertices.has(v)) sendAction({ type: "downgradeCity", vertex: v });
+    else if (wallVertices.has(v)) sendAction({ type: "buildWall", vertex: v });
     else if (cityVertices.has(v)) sendAction({ type: "buildCity", vertex: v });
     else if (settlementVertices.has(v)) sendAction({ type: "buildSettlement", vertex: v });
   };
@@ -239,8 +254,8 @@ export function Game({ net, game, ruleSet, me }: Props) {
   };
 
   const onHex = (h: HexId) => {
-    if (mode.kind === "bishop") {
-      if (mode.hexes.has(h)) sendAction({ type: "playProgressCard", cardId: "bishop", payload: { hex: h } });
+    if (mode.kind === "progressHex") {
+      if (mode.hexes.has(h)) sendAction({ type: "playProgressCard", cardId: mode.cardId, payload: { hex: h } });
       return;
     }
     if (mode.kind === "inventor") {
@@ -309,6 +324,9 @@ export function Game({ net, game, ruleSet, me }: Props) {
                 Barbarians {game.barbarianPosition}/{ruleSet.citiesAndKnights.barbarianTrackLength}
                 {game.eventDie ? ` · event die: ${game.eventDie === "barbarian" ? "⛵ barbarians" : `🏰 ${game.eventDie}`}` : ""}
                 {" · "}your knights {Object.values(game.board.knights).filter((k) => k?.playerId === me).length}
+                {" · walls "}{Object.values(game.board.walls).filter((o) => o === me).length}
+                {Object.entries(game.metropolises).filter(([, m]) => m?.playerId === me).map(([t]) => ` · ${t} metropolis`).join("")}
+                {game.merchant?.playerId === me ? " · merchant" : ""}
                 {player.defenderOfCatan > 0 ? ` · Defender of Catan ×${player.defenderOfCatan}` : ""}
               </p>
             )}
@@ -399,7 +417,8 @@ export function Game({ net, game, ruleSet, me }: Props) {
                     {mode.kind === "knight" && "Pick a hex for the robber."}
                     {mode.kind === "roadBuilding" && `Pick ${2 - mode.edges.length} more road${mode.edges.length === 1 ? "" : "s"}.`}
                     {mode.kind === "victim" && "Steal from:"}
-                    {mode.kind === "bishop" && "Bishop: pick the robber's new hex."}
+                    {mode.kind === "progressHex" && (mode.cardId === "bishop" ? "Bishop: pick the robber's new hex." : "Merchant: pick a hex next to one of your buildings.")}
+                    {mode.kind === "progressVertex" && (mode.cardId === "engineer" ? "Engineer: pick a city to wall." : "Medicine: pick a settlement to upgrade.")}
                     {mode.kind === "inventor" && (mode.first ? "Inventor: pick the second hex to swap with." : "Inventor: pick the first hex.")}
                   </span>
                   {mode.kind === "victim" &&
@@ -537,6 +556,12 @@ function statusText(game: GameState, ruleSet: RuleSet, me: number, mode: Mode): 
   const mine = current.id === me;
   const who = mine ? "You" : current.name;
 
+  if (game.pendingMetropolis) {
+    const who = game.players.find((p) => p.id === game.pendingMetropolis?.playerId)?.name;
+    return game.pendingMetropolis.playerId === me
+      ? `You earned the ${game.pendingMetropolis.track} metropolis — click the city that gets it.`
+      : `${who} is placing the ${game.pendingMetropolis.track} metropolis.`;
+  }
   if ((game.pendingProgressDiscards ?? []).length > 0) {
     const names = game.pendingProgressDiscards!.map((id) => (id === me ? "you" : game.players.find((p) => p.id === id)?.name)).join(", ");
     return game.pendingProgressDiscards!.includes(me) ? "Too many progress cards — discard one." : `Waiting for ${names} to discard a progress card.`;
@@ -579,6 +604,8 @@ function statusText(game: GameState, ruleSet: RuleSet, me: number, mode: Mode): 
       return "The barbarians won…";
     case "progressDiscard":
       return "Waiting for a progress-card discard…";
+    case "metropolisPlacement":
+      return "Placing a metropolis…";
     case "gameOver":
       return "Game over.";
   }
@@ -886,6 +913,13 @@ function describePayload(cardId: string, payload: unknown, game: GameState, rule
     case "smith": {
       const vs = p.vertices as string[];
       return vs.length === 2 ? "Promote both knights" : `Promote knight ${vs[0]?.slice(2)}`;
+    }
+    case "crane":
+      return `${TRACK_LABEL[p.track as ImprovementTrack]} for one less`;
+    case "masterMerchant": {
+      const who = game.players.find((x) => x.id === p.playerId)?.name ?? `P${String(p.playerId)}`;
+      const cards = Object.entries(p.cards as Record<string, number>).map(([c, n]) => `${n} ${CARD_ICON[c as Card]} ${c}`).join(", ");
+      return `${who}: take ${cards}`;
     }
     default:
       return JSON.stringify(payload);

@@ -14,6 +14,16 @@ export function publicVictoryPoints(state: GameState, playerId: number): number 
   return vp;
 }
 
+/** Slice-4 sources need the rule set (their values are data). */
+export function expansionVictoryPoints(state: GameState, ruleSet: RuleSet, playerId: number): number {
+  const ck = ruleSet.citiesAndKnights;
+  if (!ck) return 0;
+  let vp = 0;
+  for (const m of Object.values(state.metropolises)) if (m?.playerId === playerId) vp += ck.metropolis.victoryPoints;
+  if (state.merchant?.playerId === playerId) vp += ck.merchantVictoryPoints;
+  return vp;
+}
+
 /** Unrevealed victory-point dev cards in hand. */
 export function hiddenVictoryPoints(player: Player, ruleSet: RuleSet): number {
   const vpCardIds = new Set(
@@ -30,7 +40,7 @@ export function hiddenVictoryPoints(player: Player, ruleSet: RuleSet): number {
 export function totalVictoryPoints(state: GameState, ruleSet: RuleSet, playerId: number): number {
   const player = state.players.find((p) => p.id === playerId);
   if (!player) return 0;
-  return publicVictoryPoints(state, playerId) + hiddenVictoryPoints(player, ruleSet);
+  return publicVictoryPoints(state, playerId) + expansionVictoryPoints(state, ruleSet, playerId) + hiddenVictoryPoints(player, ruleSet);
 }
 
 export function hasWon(state: GameState, ruleSet: RuleSet, playerId: number): boolean {

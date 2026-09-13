@@ -254,6 +254,37 @@ export function Board({ game, ruleSet, targets, onVertex, onEdge, onHex }: Board
         );
       })}
 
+      {/* merchant (Cities & Knights) */}
+      {game.merchant && (() => {
+        const h = scene.hexes.find((x) => x.hex.id === game.merchant!.hex);
+        if (!h) return null;
+        const color = PLAYER_COLORS[game.merchant.playerId] ?? "#000";
+        return (
+          <g key="merchant">
+            <rect x={h.center.x - HEX * 0.42 - 9} y={h.center.y + HEX * 0.26} width={18} height={18} rx={3} fill={color} stroke="#1f2430" strokeWidth={2} />
+            <text x={h.center.x - HEX * 0.42} y={h.center.y + HEX * 0.26 + 13} textAnchor="middle" fontSize={12} fontWeight={700} fill="#fff">M</text>
+            <title>{`Merchant (${game.players[game.merchant.playerId]?.name ?? "?"})`}</title>
+          </g>
+        );
+      })()}
+
+      {/* city walls and metropolises (Cities & Knights) */}
+      {scene.vertices.map(({ id, p }) => {
+        const wall = game.board.walls[id] !== undefined;
+        const metro = Object.entries(game.metropolises).find(([, m]) => m?.vertex === id);
+        if (!wall && !metro) return null;
+        return (
+          <g key={`cw-${id}`} pointerEvents="none">
+            {wall && <circle cx={p.x} cy={p.y} r={HEX * 0.34} fill="none" stroke="#5b4a2b" strokeWidth={3} strokeDasharray="4 2" />}
+            {metro && (
+              <text x={p.x} y={p.y - HEX * 0.3} textAnchor="middle" fontSize={HEX * 0.3} fill="#f5c400" stroke="#1f2430" strokeWidth={0.5}>
+                ★<title>{`${metro[0]} metropolis`}</title>
+              </text>
+            )}
+          </g>
+        );
+      })}
+
       {/* knights (Cities & Knights) */}
       {scene.vertices.map(({ id, p }) => {
         const k = game.board.knights[id];

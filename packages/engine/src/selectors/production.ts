@@ -125,6 +125,11 @@ export function tradeRatiosFor(
   const ratios: Record<Resource, number> = { wood: 4, brick: 4, sheep: 4, wheat: 4, ore: 4 };
   const fleet = state.players.find((p) => p.id === playerId)?.merchantFleet;
   if (fleet && fleet in ratios) ratios[fleet as Resource] = 2;
+  // The merchant: its hex's resource trades 2:1 for whoever owns the piece.
+  if (state.merchant?.playerId === playerId) {
+    const hex = ruleSet.board.hexes.find((h) => h.id === state.merchant!.hex);
+    if (hex && hex.resource !== "desert") ratios[hex.resource] = Math.min(ratios[hex.resource], 2);
+  }
 
   for (const port of ruleSet.board.ports) {
     const owns = port.vertexIds.some((v) => state.board.buildings[v]?.playerId === playerId);

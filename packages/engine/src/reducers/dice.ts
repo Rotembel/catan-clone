@@ -20,6 +20,14 @@ import { illegal, refresh, requireCurrentPlayer, requirePhase } from "./helpers.
 /** Hand size (resources + commodities) above which a 7 forces a discard. */
 export const DISCARD_THRESHOLD = 7;
 
+/** The player's own threshold: 7, plus the city-wall bonus per wall (Cities & Knights). */
+export function discardThresholdFor(state: GameState, ruleSet: RuleSet, playerId: number): number {
+  const ck = ruleSet.citiesAndKnights;
+  if (!ck) return DISCARD_THRESHOLD;
+  const walls = Object.values(state.board.walls).filter((o) => o === playerId).length;
+  return DISCARD_THRESHOLD + walls * ck.wall.discardBonus;
+}
+
 export function rollDice(state: GameState, ruleSet: RuleSet, playerId: number): GameState {
   requirePhase(state, "rollDice");
   requireCurrentPlayer(state, playerId);
@@ -58,7 +66,7 @@ export function resolveRoll(state: GameState, ruleSet: RuleSet): GameState {
   let next: GameState = state;
 
   if (roll === 7) {
-    const owing = next.players.filter((p) => handSize(p) > DISCARD_THRESHOLD).map((p) => p.id);
+    const owing = next.players.filter((p) => handSize(p) > discardThresholdFor(next, ruleSet, p.id)).map((p) => p.id);
     if (owing.length > 0) {
       next = { ...next, pendingDiscards: owing, turn: { ...next.turn, phase: "discard" } };
     } else {
@@ -88,12 +96,13 @@ export function resolveRoll(state: GameState, ruleSet: RuleSet): GameState {
   return refresh(next, ruleSet);
 }
 
-/** How many cards this player must discard (half, rounded down). */
-export function discardCountFor(state: GameState, playerId: number): number {
+/** How many cards this player must discard (half, rounded down) — 0 if within their threshold. */
+export function discardCountFor(state: GameState, playerId: number, ruleSet?: RuleSet): number {
   const player = state.players.find((p) => p.id === playerId);
   if (!player) return 0;
   const hand = handSize(player);
-  return hand > DISCARD_THRESHOLD ? Math.floor(hand / 2) : 0;
+  const threshold = ruleSet ? discardThresholdFor(state, ruleSet, playerId) : DISCARD_THRESHOLD;
+  return hand > threshold ? Math.floor(hand / 2) : 0;
 }
 
 export function discardCards(
@@ -107,7 +116,7 @@ export function discardCards(
   if (!pending.includes(playerId)) illegal(`player ${playerId} does not owe a discard`);
 
   const player = state.players.find((p) => p.id === playerId)!;
-  const required = discardCountFor(state, playerId);
+  const required = discardCountFor(state, playerId, ruleSet);
   if (totalAllCards(discard) !== required) {
     illegal(`player ${playerId} must discard exactly ${required} cards`);
   }

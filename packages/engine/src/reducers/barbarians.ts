@@ -12,6 +12,8 @@
 import type { GameState, RuleSet, VertexId } from "@catan/shared";
 import { illegal, refresh, requirePhase, requirePlayer } from "./helpers.js";
 import { resolveRoll } from "./dice.js";
+import { metropolisVertices } from "./metropolis.js";
+import { removeWall } from "./walls.js";
 
 /** Sum of the player's *active* knights' levels. */
 export function knightStrength(state: GameState, playerId: number): number {
@@ -27,18 +29,21 @@ export function barbarianStrength(state: GameState): number {
   return Object.values(state.board.buildings).filter((b) => b?.kind === "city").length;
 }
 
+/** The player's cities the barbarians could take: a metropolis is immune. */
 export function cityVertices(state: GameState, playerId: number): VertexId[] {
+  const immune = metropolisVertices(state);
   return Object.entries(state.board.buildings)
-    .filter(([, b]) => b?.playerId === playerId && b.kind === "city")
+    .filter(([v, b]) => b?.playerId === playerId && b.kind === "city" && !immune.has(v))
     .map(([v]) => v);
 }
 
+/** City -> settlement; its wall (if any) is lost with it. */
 function downgrade(state: GameState, vertex: VertexId): GameState {
   const building = state.board.buildings[vertex]!;
-  return {
+  return removeWall({
     ...state,
     board: { ...state.board, buildings: { ...state.board.buildings, [vertex]: { ...building, kind: "settlement" } } },
-  };
+  }, vertex);
 }
 
 /** One step of the ship; an attack when it reaches the end of the track. */
@@ -71,6 +76,7 @@ export function resolveBarbarianAttack(state: GameState): GameState {
       next = { ...next, players: next.players.map((p) => (p.id === id ? { ...p, defenderOfCatan: p.defenderOfCatan + 1 } : p)) };
     }
   } else {
+    // Only players with a city the barbarians *can* take are at risk.
     const withCities = strengths.filter((s) => cityVertices(next, s.playerId).length > 0);
     const min = Math.min(...withCities.map((s) => s.strength));
     for (const loser of withCities.filter((s) => s.strength === min)) {

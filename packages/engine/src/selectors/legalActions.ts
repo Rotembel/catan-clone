@@ -14,6 +14,8 @@ import { canBuildImprovement } from "../reducers/improve.js";
 import { cityVertices } from "../reducers/barbarians.js";
 import { knightCounts, knightReachableVertices, legalKnightVertices } from "../reducers/knights.js";
 import { playableProgressCards } from "../reducers/progress.js";
+import { metropolisEligibleCities } from "../reducers/metropolis.js";
+import { canBuildWall, legalWallVertices } from "../reducers/walls.js";
 import { stealTargetsAt } from "../reducers/robber.js";
 import { CARDS, COMMODITIES, IMPROVEMENT_TRACKS, RESOURCES, canAfford, isCommodity } from "../resources.js";
 import {
@@ -25,12 +27,12 @@ import {
 import { commodityTradeRatioFor, tradeRatiosFor } from "./production.js";
 
 /** A deterministic, legal discard: shed from the biggest stacks first. */
-export function canonicalDiscard(state: GameState, playerId: number): CardCounts {
+export function canonicalDiscard(state: GameState, playerId: number, ruleSet?: RuleSet): CardCounts {
   const player = state.players.find((p) => p.id === playerId);
   const discard: CardCounts = {};
   if (!player) return discard;
 
-  let remaining = discardCountFor(state, playerId);
+  let remaining = discardCountFor(state, playerId, ruleSet);
   const pool: { resource: Card; count: number }[] = [
     ...RESOURCES.map((r) => ({ resource: r as Card, count: player.resources[r] })),
     ...COMMODITIES.map((c) => ({ resource: c as Card, count: player.commodities[c] })),
@@ -134,7 +136,7 @@ export function legalActions(state: GameState, ruleSet: RuleSet, playerId: numbe
 
     case "discard": {
       if (!(state.pendingDiscards ?? []).includes(playerId)) break;
-      actions.push({ type: "discardCards", discard: canonicalDiscard(state, playerId) });
+      actions.push({ type: "discardCards", discard: canonicalDiscard(state, playerId, ruleSet) });
       break;
     }
 
@@ -153,6 +155,12 @@ export function legalActions(state: GameState, ruleSet: RuleSet, playerId: numbe
     case "progressDiscard": {
       if (!(state.pendingProgressDiscards ?? []).includes(playerId)) break;
       for (const cardId of [...new Set(player.progressCards)]) actions.push({ type: "discardProgressCard", cardId });
+      break;
+    }
+
+    case "metropolisPlacement": {
+      if (state.pendingMetropolis?.playerId !== playerId) break;
+      for (const vertex of metropolisEligibleCities(state, playerId)) actions.push({ type: "placeMetropolis", vertex });
       break;
     }
 
@@ -195,6 +203,9 @@ export function legalActions(state: GameState, ruleSet: RuleSet, playerId: numbe
 
       const ck = ruleSet.citiesAndKnights;
       if (ck) {
+        if (canBuildWall(state, ruleSet, playerId)) {
+          for (const vertex of legalWallVertices(state, playerId)) actions.push({ type: "buildWall", vertex });
+        }
         const knights = knightCounts(state, playerId);
         if (canAfford(player.resources, ck.knightCosts.build) && knights[1] < ck.knightsPerLevel) {
           for (const vertex of legalKnightVertices(state, ruleSet, playerId)) {

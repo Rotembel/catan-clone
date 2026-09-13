@@ -15,6 +15,7 @@ export function nextActor(state: GameState): number | undefined {
   if (downgrades.length > 0) return downgrades[0];
   const progress = state.pendingProgressDiscards ?? [];
   if (progress.length > 0) return progress[0];
+  if (state.pendingMetropolis) return state.pendingMetropolis.playerId;
   if (state.pendingTrade?.toPlayerId !== undefined) return state.pendingTrade.toPlayerId;
   return state.players[state.turn.current]?.id;
 }

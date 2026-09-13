@@ -5,6 +5,7 @@
 import type { GameState, ImprovementTrack, RuleSet } from "@catan/shared";
 import { addCommodities, subtractCommodities } from "../resources.js";
 import { illegal, pieceCounts, refresh, requireCurrentPlayer, requirePhase, requirePlayer, updatePlayer } from "./helpers.js";
+import { resolveMetropolisClaims } from "./metropolis.js";
 
 export function maxImprovementLevel(ruleSet: RuleSet): number {
   return ruleSet.citiesAndKnights?.improvementCosts.length ?? 0;
@@ -65,5 +66,12 @@ export function buildImprovement(
     improvements: { ...p.improvements, [track]: p.improvements[track] + 1 },
   }));
   next = { ...next, commodityBank: addCommodities(next.commodityBank, { [commodity]: cost }) };
+  next = resolveMetropolisClaims(next, ruleSet, playerId, [track]);
   return refresh(next, ruleSet, playerId);
+}
+
+/** Upgrade a track without paying — the Crane discount is applied by the caller. */
+export function raiseImprovement(state: GameState, ruleSet: RuleSet, playerId: number, track: ImprovementTrack): GameState {
+  const next = updatePlayer(state, playerId, (p) => ({ ...p, improvements: { ...p.improvements, [track]: p.improvements[track] + 1 } }));
+  return resolveMetropolisClaims(next, ruleSet, playerId, [track]);
 }

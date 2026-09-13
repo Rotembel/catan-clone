@@ -12,6 +12,8 @@ import { buildImprovement } from "./reducers/improve.js";
 import { downgradeCity } from "./reducers/barbarians.js";
 import { activateKnight, buildKnight, moveKnight, promoteKnight } from "./reducers/knights.js";
 import { discardProgressCard, playProgressCard } from "./reducers/progress.js";
+import { placeMetropolis } from "./reducers/metropolis.js";
+import { buildWall } from "./reducers/walls.js";
 import { IllegalActionError, illegal, requireInPlay, requirePlayer } from "./reducers/helpers.js";
 import { moveRobber } from "./reducers/robber.js";
 import { placeSetupRoad, placeSetupSettlement } from "./reducers/setup.js";
@@ -87,6 +89,12 @@ export function apply(state: GameState, action: ActionEnvelope, ruleSet: RuleSet
 
     case "discardProgressCard":
       return discardProgressCard(state, ruleSet, playerId, action.action.cardId);
+
+    case "buildWall":
+      return buildWall(state, ruleSet, playerId, action.action.vertex);
+
+    case "placeMetropolis":
+      return placeMetropolis(state, ruleSet, playerId, action.action.vertex);
 
     case "endTurn":
       return endTurn(state, ruleSet, playerId);

@@ -1,12 +1,14 @@
 // Science (green) progress cards implemented in slice 3.
 
-import type { AlchemistPayload, GameState, InventorPayload, Resource, RoadBuildingPayload, RuleSet, SmithPayload, VertexId } from "@catan/shared";
+import type { AlchemistPayload, CranePayload, EngineerPayload, GameState, InventorPayload, MedicinePayload, Resource, RoadBuildingPayload, RuleSet, SmithPayload, VertexId } from "@catan/shared";
 import { getGeometry } from "../../geometryCache.js";
-import { placeFreeRoad } from "../../reducers/build.js";
+import { placeFreeRoad, upgradeToCity } from "../../reducers/build.js";
 import { illegal, pieceCounts, pieceLimitsOf, requirePlayer, updatePlayer } from "../../reducers/helpers.js";
+import { nextImprovementCost, raiseImprovement } from "../../reducers/improve.js";
 import { knightCounts } from "../../reducers/knights.js";
-import { addResources, subtractResources } from "../../resources.js";
-import { legalRoadEdges } from "../../selectors/building.js";
+import { legalWallVertices, placeWall, wallCount } from "../../reducers/walls.js";
+import { IMPROVEMENT_TRACKS, addCommodities, addResources, canAfford, subtractCommodities, subtractResources } from "../../resources.js";
+import { legalCityVertices, legalRoadEdges } from "../../selectors/building.js";
 import { effectiveNumberToken } from "../../selectors/production.js";
 import type { ProgressCardImpl } from "../types.js";
 
@@ -155,4 +157,67 @@ export const smith: ProgressCardImpl = {
   },
 };
 
-export const SCIENCE_CARDS: ProgressCardImpl[] = [irrigation, mining, roadBuilding, inventor, alchemist, smith];
+/** Build a city wall for free. */
+export const engineer: ProgressCardImpl = {
+  id: "engineer",
+  options: (state, ruleSet, playerId) =>
+    wallCount(state, playerId) < ruleSet.citiesAndKnights!.wall.perPlayer ? legalWallVertices(state, playerId).map((vertex) => ({ vertex })) : [],
+  apply(state, ruleSet, playerId, payload) {
+    const { vertex } = (payload ?? {}) as EngineerPayload;
+    if (!vertex) illegal("the engineer needs a city to wall");
+    return placeWall(state, ruleSet, playerId, vertex);
+  },
+};
+
+/** Upgrade a settlement to a city for 2 ore + 1 wheat. */
+const MEDICINE_COST: Partial<Record<Resource, number>> = { ore: 2, wheat: 1 };
+export const medicine: ProgressCardImpl = {
+  id: "medicine",
+  options(state, ruleSet, playerId) {
+    const player = state.players.find((p) => p.id === playerId)!;
+    if (!canAfford(player.resources, MEDICINE_COST)) return [];
+    if (pieceCounts(state, playerId).cities >= pieceLimitsOf(ruleSet).cities) return [];
+    return legalCityVertices(state, playerId).map((vertex) => ({ vertex }));
+  },
+  apply(state, ruleSet, playerId, payload) {
+    const { vertex } = (payload ?? {}) as MedicinePayload;
+    const player = requirePlayer(state, playerId);
+    if (!canAfford(player.resources, MEDICINE_COST)) illegal("medicine still costs 2 ore and 1 wheat");
+    if (pieceCounts(state, playerId).cities >= pieceLimitsOf(ruleSet).cities) illegal("you have no cities left");
+    if (!legalCityVertices(state, playerId).includes(vertex)) illegal(`no settlement of yours at ${vertex}`);
+    let next = updatePlayer(state, playerId, (p) => ({ ...p, resources: subtractResources(p.resources, MEDICINE_COST) }));
+    next = { ...next, bank: addResources(next.bank, MEDICINE_COST) };
+    return upgradeToCity(next, ruleSet, playerId, vertex);
+  },
+};
+
+/** Build a city improvement for one commodity less. */
+export const crane: ProgressCardImpl = {
+  id: "crane",
+  options(state, ruleSet, playerId) {
+    const ck = ruleSet.citiesAndKnights!;
+    const player = state.players.find((p) => p.id === playerId)!;
+    if (pieceCounts(state, playerId).cities === 0) return [];
+    return IMPROVEMENT_TRACKS.filter((track) => {
+      const cost = nextImprovementCost(state, ruleSet, playerId, track);
+      return cost !== undefined && player.commodities[ck.trackCommodity[track]] >= cost - 1;
+    }).map((track) => ({ track }));
+  },
+  apply(state, ruleSet, playerId, payload) {
+    const { track } = (payload ?? {}) as CranePayload;
+    const ck = ruleSet.citiesAndKnights!;
+    if (!IMPROVEMENT_TRACKS.includes(track)) illegal("the crane needs an improvement track");
+    if (pieceCounts(state, playerId).cities === 0) illegal("you need a city to build a city improvement");
+    const cost = nextImprovementCost(state, ruleSet, playerId, track);
+    if (cost === undefined) illegal(`the ${track} track is already at its maximum level`);
+    const commodity = ck.trackCommodity[track];
+    const pay = Math.max(0, cost - 1);
+    const player = requirePlayer(state, playerId);
+    if (player.commodities[commodity] < pay) illegal(`with the crane, this level costs ${pay} ${commodity}`);
+    let next = updatePlayer(state, playerId, (p) => ({ ...p, commodities: subtractCommodities(p.commodities, { [commodity]: pay }) }));
+    next = { ...next, commodityBank: addCommodities(next.commodityBank, { [commodity]: pay }) };
+    return raiseImprovement(next, ruleSet, playerId, track);
+  },
+};
+
+export const SCIENCE_CARDS: ProgressCardImpl[] = [irrigation, mining, roadBuilding, inventor, alchemist, smith, engineer, medicine, crane];

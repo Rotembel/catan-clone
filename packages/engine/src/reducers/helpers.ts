@@ -1,6 +1,6 @@
 import type { GameState, Player, RuleSet, TurnPhase } from "@catan/shared";
 import { resolveLargestArmy, resolveLongestRoad } from "../selectors/awards.js";
-import { publicVictoryPoints, totalVictoryPoints } from "../selectors/victory.js";
+import { expansionVictoryPoints, publicVictoryPoints, totalVictoryPoints } from "../selectors/victory.js";
 
 /** Thrown when an action is not legal. State is never mutated before this throws. */
 export class IllegalActionError extends Error {
@@ -64,7 +64,7 @@ export function refresh(state: GameState, ruleSet: RuleSet, actingPlayerId?: num
 
   next = {
     ...next,
-    players: next.players.map((p) => ({ ...p, victoryPoints: publicVictoryPoints(next, p.id) })),
+    players: next.players.map((p) => ({ ...p, victoryPoints: publicVictoryPoints(next, p.id) + expansionVictoryPoints(next, ruleSet, p.id) })),
   };
 
   if (actingPlayerId !== undefined && next.winner === undefined) {

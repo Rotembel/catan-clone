@@ -131,6 +131,21 @@ export interface CitiesAndKnightsRules {
   progressCards: ProgressCardDef[];
   /** Most progress cards a player may hold; drawing past it forces a discard. */
   progressHandLimit: number;
+  /** Slice 4: metropolises, city walls, the merchant. */
+  metropolis: {
+    /** Improvement level that claims an unowned metropolis. */
+    claimLevel: number;
+    /** Level that takes a metropolis from a holder still below it (and secures your own). */
+    takeLevel: number;
+    victoryPoints: number;
+  };
+  wall: {
+    cost: Partial<Record<Resource, number>>;
+    perPlayer: number;
+    /** Each wall raises the robber's discard threshold by this much. */
+    discardBonus: number;
+  };
+  merchantVictoryPoints: number;
 }
 
 /** One opening-placement round: a piece, optionally followed by a road. */
@@ -203,6 +218,8 @@ export type TurnPhase =
   | "barbarianDowngrade"
   /** Someone drew past the progress-card hand limit; `pendingProgressDiscards` must choose. */
   | "progressDiscard"
+  /** A metropolis was earned and `pendingMetropolis.playerId` must choose which city carries it. */
+  | "metropolisPlacement"
   | "gameOver";
 
 export interface Player {
@@ -257,6 +274,20 @@ export interface BoardState {
   knights: Partial<Record<VertexId, Knight>>;
   /** Number tokens moved by the Inventor; the layout in the RuleSet stays untouched. */
   tokenOverrides: Partial<Record<HexId, number>>;
+  /** City walls, by the city's vertex -> owner; always empty in a base game. */
+  walls: Partial<Record<VertexId, number>>;
+}
+
+/** Where a track's metropolis stands. The building itself stays a plain city. */
+export interface Metropolis {
+  playerId: number;
+  vertex: VertexId;
+}
+
+/** The single merchant piece: on a land hex, owned by whoever placed it last. */
+export interface Merchant {
+  hex: HexId;
+  playerId: number;
 }
 
 export interface TradeOffer {
@@ -297,6 +328,12 @@ export interface GameState {
   pendingProgressDiscards?: number[];
   /** Alchemist: the production dice chosen for the coming roll. */
   alchemistDice?: [number, number];
+  /** Canonical metropolis ownership, one per track; empty in a base game. */
+  metropolises: Partial<Record<ImprovementTrack, Metropolis>>;
+  /** Who must pick a city for a freshly earned metropolis (phase "metropolisPlacement"). */
+  pendingMetropolis?: { playerId: number; track: ImprovementTrack };
+  /** The merchant piece, once placed. */
+  merchant?: Merchant;
   /**
    * Current holders of the two bonus-VP awards. These are *state*, not
    * derived values: the official tie rule ("you only take it by strictly
@@ -345,6 +382,9 @@ export type Action =
   /** Cities & Knights progress cards (slice 3). Payload shapes: see the *Payload types. */
   | { type: "playProgressCard"; cardId: string; payload?: unknown }
   | { type: "discardProgressCard"; cardId: string }
+  /** Cities & Knights slice 4. */
+  | { type: "buildWall"; vertex: VertexId }
+  | { type: "placeMetropolis"; vertex: VertexId }
   | { type: "endTurn" };
 
 // playProgressCard payloads, keyed by card id.
@@ -373,6 +413,22 @@ export interface AlchemistPayload {
 }
 export interface SmithPayload {
   vertices: VertexId[]; // 1 or 2 knights to promote
+}
+export interface MerchantPayload {
+  hex: HexId;
+}
+export interface EngineerPayload {
+  vertex: VertexId; // a city of yours without a wall
+}
+export interface MedicinePayload {
+  vertex: VertexId; // a settlement of yours to upgrade cheaply
+}
+export interface CranePayload {
+  track: ImprovementTrack;
+}
+export interface MasterMerchantPayload {
+  playerId: number;
+  cards: CardCounts; // up to 2 cards the target holds
 }
 
 // playDevCard payloads, keyed by cardId — kept separate from the Action
