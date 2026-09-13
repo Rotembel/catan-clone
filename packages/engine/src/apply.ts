@@ -14,6 +14,7 @@ import { activateKnight, buildKnight, moveKnight, promoteKnight } from "./reduce
 import { discardProgressCard, playProgressCard } from "./reducers/progress.js";
 import { placeMetropolis } from "./reducers/metropolis.js";
 import { buildWall } from "./reducers/walls.js";
+import { respondInteraction } from "./reducers/respond.js";
 import { IllegalActionError, illegal, requireInPlay, requirePlayer } from "./reducers/helpers.js";
 import { moveRobber } from "./reducers/robber.js";
 import { placeSetupRoad, placeSetupSettlement } from "./reducers/setup.js";
@@ -95,6 +96,9 @@ export function apply(state: GameState, action: ActionEnvelope, ruleSet: RuleSet
 
     case "placeMetropolis":
       return placeMetropolis(state, ruleSet, playerId, action.action.vertex);
+
+    case "respondInteraction":
+      return respondInteraction(state, ruleSet, playerId, action.action.payload);
 
     case "endTurn":
       return endTurn(state, ruleSet, playerId);

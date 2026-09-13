@@ -62,6 +62,8 @@ function describe(envelope: ActionEnvelope, state: GameState): string {
       return `${name} builds a city wall`;
     case "placeMetropolis":
       return `${name} places a metropolis`;
+    case "respondInteraction":
+      return `${name} responds`;
     case "endTurn":
       return `${name} ends their turn`;
   }

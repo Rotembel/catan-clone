@@ -220,6 +220,10 @@ export type TurnPhase =
   | "progressDiscard"
   /** A metropolis was earned and `pendingMetropolis.playerId` must choose which city carries it. */
   | "metropolisPlacement"
+  /** Another player must answer a card (see `pendingInteraction`). */
+  | "respond"
+  /** A card forced discards outside the 7 flow (see `discardRequests`). */
+  | "forcedDiscard"
   | "gameOver";
 
 export interface Player {
@@ -290,6 +294,39 @@ export interface Merchant {
   playerId: number;
 }
 
+/**
+ * A bounded multi-player response (Cities & Knights slice 5). Exactly one
+ * responder acts at a time; `responders` is the queue with the current one
+ * first. `kind` selects a small engine module; `payload` is that module's
+ * data. Never a closure — plain, persisted, replayable.
+ */
+export interface PendingInteraction {
+  kind:
+    | "commercialHarbor"
+    | "wedding"
+    | "deserterChoose"
+    | "deserterPlace"
+    | "diplomatReplace"
+    | "displaceKnight";
+  sourcePlayerId: number;
+  sourceCardId?: string;
+  responders: number[];
+  currentResponder: number;
+  payload: unknown;
+  /** Phase to resume when the queue is empty (the source player's main turn). */
+  returnPhase: TurnPhase;
+}
+
+/** A discard owed for a reason other than the 7 (e.g. Saboteur). */
+export interface DiscardRequest {
+  playerId: number;
+  count: number;
+  reason: string;
+  sourcePlayerId?: number;
+  sourceCardId?: string;
+  returnPhase: TurnPhase;
+}
+
 export interface TradeOffer {
   fromPlayerId: number;
   /** undefined = a bank/port trade, resolved immediately by proposeTrade itself. */
@@ -334,6 +371,10 @@ export interface GameState {
   pendingMetropolis?: { playerId: number; track: ImprovementTrack };
   /** The merchant piece, once placed. */
   merchant?: Merchant;
+  /** The response in progress, when `turn.phase` is "respond". */
+  pendingInteraction?: PendingInteraction;
+  /** Discards owed outside the 7 flow, when `turn.phase` is "forcedDiscard". */
+  discardRequests?: DiscardRequest[];
   /**
    * Current holders of the two bonus-VP awards. These are *state*, not
    * derived values: the official tie rule ("you only take it by strictly
@@ -385,6 +426,8 @@ export type Action =
   /** Cities & Knights slice 4. */
   | { type: "buildWall"; vertex: VertexId }
   | { type: "placeMetropolis"; vertex: VertexId }
+  /** The current responder's answer to `pendingInteraction` (payload shape per kind). */
+  | { type: "respondInteraction"; payload?: unknown }
   | { type: "endTurn" };
 
 // playProgressCard payloads, keyed by card id.
@@ -429,6 +472,38 @@ export interface CranePayload {
 export interface MasterMerchantPayload {
   playerId: number;
   cards: CardCounts; // up to 2 cards the target holds
+}
+export interface CommercialHarborPayload {
+  /** One resource offered to each opponent you want to trade with. */
+  offers: Record<number, Resource>;
+}
+export interface DeserterPayload {
+  playerId: number;
+}
+export interface DiplomatPayload {
+  edge: EdgeId;
+}
+export interface IntriguePayload {
+  vertex: VertexId;
+}
+// respondInteraction payloads, by interaction kind.
+export interface CommercialHarborResponse {
+  commodity?: Commodity; // omitted only when you hold none
+}
+export interface WeddingResponse {
+  cards: CardCounts;
+}
+export interface DeserterChooseResponse {
+  vertex: VertexId; // the knight you give up
+}
+export interface DeserterPlaceResponse {
+  vertex?: VertexId; // omitted = you cannot / do not place it
+}
+export interface DiplomatReplaceResponse {
+  edge?: EdgeId; // omitted = do not re-place the road
+}
+export interface DisplaceKnightResponse {
+  vertex: VertexId; // where the displaced knight goes
 }
 
 // playDevCard payloads, keyed by cardId — kept separate from the Action

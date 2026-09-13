@@ -10,6 +10,7 @@ import { getGeometry } from "../geometryCache.js";
 import { addResources, canAfford, subtractResources } from "../resources.js";
 import { isVertexBlockedFor, isVertexFree, playerHasRoadAt } from "../selectors/building.js";
 import { illegal, refresh, requireCurrentPlayer, requirePhase, requirePlayer, updatePlayer } from "./helpers.js";
+import { displaceKnightAt } from "../interactions/displaceKnight.js";
 
 function rules(ruleSet: RuleSet) {
   const ck = ruleSet.citiesAndKnights;
@@ -47,10 +48,27 @@ export function knightReachableVertices(
   playerId: number,
   from: VertexId
 ): VertexId[] {
+  return knightMoveTargets(state, ruleSet, playerId, from, 0).free;
+}
+
+/**
+ * Where a knight of `level` at `from` may go: free vertices, and — if level
+ * is set — vertices holding a *weaker* enemy knight it may displace. Both
+ * are reached along the player's own roads; an enemy piece is never passed
+ * through, but a weaker enemy knight may be the destination.
+ */
+export function knightMoveTargets(
+  state: GameState,
+  ruleSet: RuleSet,
+  playerId: number,
+  from: VertexId,
+  level: number
+): { free: VertexId[]; displace: VertexId[] } {
   const geometry = getGeometry(ruleSet.board);
   const seen = new Set<VertexId>([from]);
   const queue: VertexId[] = [from];
-  const out: VertexId[] = [];
+  const free: VertexId[] = [];
+  const displace: VertexId[] = [];
   while (queue.length > 0) {
     const vertex = queue.shift()!;
     for (const edge of geometry.vertexEdges.get(vertex) ?? []) {
@@ -59,12 +77,14 @@ export function knightReachableVertices(
       const next = ends[0] === vertex ? ends[1] : ends[0];
       if (seen.has(next)) continue;
       seen.add(next);
-      if (isVertexFree(state, next)) out.push(next);
+      if (isVertexFree(state, next)) free.push(next);
+      const enemy = state.board.knights[next];
+      if (enemy && enemy.playerId !== playerId && enemy.level < level) displace.push(next);
       // Own pieces can be passed through; an opponent's cannot.
       if (!isVertexBlockedFor(state, next, playerId)) queue.push(next);
     }
   }
-  return out;
+  return { free, displace };
 }
 
 function ownKnight(state: GameState, playerId: number, vertex: VertexId): Knight {
@@ -140,12 +160,16 @@ export function moveKnight(state: GameState, ruleSet: RuleSet, playerId: number,
   const knight = ownKnight(state, playerId, from);
   if (!knight.active) illegal("only an active knight can move");
   if (knight.activatedThisTurn) illegal("a knight cannot move in the turn it was activated");
-  if (!knightReachableVertices(state, ruleSet, playerId, from).includes(to)) {
+  const targets = knightMoveTargets(state, ruleSet, playerId, from, knight.level);
+  const displacing = targets.displace.includes(to);
+  if (!targets.free.includes(to) && !displacing) {
     illegal(`the knight at ${from} cannot reach ${to} along your roads`);
   }
 
-  // Moving spends the activation.
+  // Moving spends the activation. A weaker enemy knight in the way is
+  // displaced: its owner relocates it (or loses it) before play resumes.
   let next = withKnight(state, from, undefined);
+  if (displacing) next = displaceKnightAt(next, ruleSet, to, playerId);
   next = withKnight(next, to, { ...knight, active: false });
   return refresh(next, ruleSet, playerId);
 }

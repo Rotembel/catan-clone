@@ -96,13 +96,27 @@ export function resolveRoll(state: GameState, ruleSet: RuleSet): GameState {
   return refresh(next, ruleSet);
 }
 
-/** How many cards this player must discard (half, rounded down) — 0 if within their threshold. */
+/**
+ * How many cards this player must discard right now: their forced request
+ * if one is pending (e.g. Saboteur), else half (rounded down) when over
+ * their 7-roll threshold.
+ */
 export function discardCountFor(state: GameState, playerId: number, ruleSet?: RuleSet): number {
   const player = state.players.find((p) => p.id === playerId);
   if (!player) return 0;
+  if (state.turn.phase === "forcedDiscard") {
+    return state.discardRequests?.find((r) => r.playerId === playerId)?.count ?? 0;
+  }
   const hand = handSize(player);
   const threshold = ruleSet ? discardThresholdFor(state, ruleSet, playerId) : DISCARD_THRESHOLD;
   return hand > threshold ? Math.floor(hand / 2) : 0;
+}
+
+/** Owe `count` cards for `reason`; nothing happens for players owing 0. */
+export function requestDiscards(state: GameState, requests: import("@catan/shared").DiscardRequest[]): GameState {
+  const owed = requests.filter((r) => r.count > 0);
+  if (owed.length === 0) return state;
+  return { ...state, discardRequests: owed, turn: { ...state.turn, phase: "forcedDiscard" } };
 }
 
 export function discardCards(
@@ -111,8 +125,9 @@ export function discardCards(
   playerId: number,
   discard: CardCounts
 ): GameState {
-  requirePhase(state, "discard");
-  const pending = state.pendingDiscards ?? [];
+  requirePhase(state, "discard", "forcedDiscard");
+  const forced = state.turn.phase === "forcedDiscard";
+  const pending = forced ? (state.discardRequests ?? []).map((r) => r.playerId) : (state.pendingDiscards ?? []);
   if (!pending.includes(playerId)) illegal(`player ${playerId} does not owe a discard`);
 
   const player = state.players.find((p) => p.id === playerId)!;
@@ -135,6 +150,16 @@ export function discardCards(
     commodityBank: addCommodities(state.commodityBank, commodities),
     players: state.players.map((p) => (p.id === playerId ? playerMinus(p, discard) : p)),
   };
+
+  if (forced) {
+    const requests = (state.discardRequests ?? []).filter((r) => r.playerId !== playerId);
+    const returnPhase = state.discardRequests!.find((r) => r.playerId === playerId)!.returnPhase;
+    next =
+      requests.length > 0
+        ? { ...next, discardRequests: requests }
+        : { ...next, discardRequests: undefined, turn: { ...next.turn, phase: returnPhase } };
+    return refresh(next, ruleSet);
+  }
 
   next =
     remaining.length > 0

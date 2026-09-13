@@ -5,7 +5,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { boot, type ColyseusTestServer } from "@colyseus/testing";
 import type { Room as ClientRoom } from "colyseus.js";
-import { createInitialState, legalActions, pieceCounts } from "@catan/engine";
+import { createInitialState, legalActions, pieceCounts, startInteraction } from "@catan/engine";
 import { createRuleSet } from "@catan/rulesets";
 import { nextActor } from "@catan/bot";
 import {
@@ -645,5 +645,36 @@ describe("CatanRoom", () => {
       const saved = await store.load("MIDP");
       expect(saved?.game).toEqual(resumed);
     });
+  });
+
+  it("a room saved mid-response rehydrates; only the responder can answer; the effect applies once", async () => {
+    const { ruleSet, state: rng } = createRuleSet("cities-and-knights", { seed: "mid-response" });
+    let game = createInitialState(ruleSet, { playerNames: ["Ada", "Grace"], rngState: rng });
+    game = { ...game, turn: { current: 0, phase: "mainTurn" }, players: game.players.map((p) => (p.id === 1 ? { ...p, resources: { ...p.resources, wood: 2 } } : p)) };
+    game = startInteraction(game, { kind: "wedding", sourcePlayerId: 0, sourceCardId: "wedding", responders: [1], payload: undefined });
+    await store.save({
+      code: "MIDR",
+      seats: [
+        { playerId: 0, name: "Ada", connected: false, isHost: true, kind: "human", token: "tok-ada" },
+        { playerId: 1, name: "Grace", connected: false, isHost: false, kind: "human", token: "tok-grace" },
+      ],
+      ruleSet, game, build: TEST_BUILD, createdAt: 1, updatedAt: 1,
+    });
+    const grace = await connect("MIDR", "Grace", "tok-grace");
+    const ada = await connect("MIDR", "Ada", "tok-ada");
+    await waitFor(() => grace.games[0] && ada.games[0] && grace.ruleSet ? true : undefined);
+    expect(grace.games[0]!.turn.phase).toBe("respond");
+    expect(grace.games[0]!.pendingInteraction?.currentResponder).toBe(1);
+    expect(legalActions(grace.games[0]!, grace.ruleSet!, 0)).toEqual([]);
+    ada.room.send(MSG.action, { type: "respondInteraction", payload: { cards: { wood: 2 } } });
+    const err = await waitFor(() => ada.errors[0]);
+    expect(err.message).toMatch(/player 1's response/);
+    grace.room.send(MSG.action, { type: "respondInteraction", payload: { cards: { wood: 2 } } });
+    const done = await waitFor(() => (grace.games.length >= 2 ? grace.games.at(-1) : undefined));
+    expect(done.players[0]!.resources.wood).toBe(2);
+    expect(done.players[1]!.resources.wood).toBe(0);
+    expect(done.pendingInteraction).toBeUndefined();
+    expect(done.turn).toEqual({ current: 0, phase: "mainTurn" });
+    expect((await store.load("MIDR"))?.game).toEqual(done);
   });
 });

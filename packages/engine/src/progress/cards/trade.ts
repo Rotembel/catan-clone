@@ -1,6 +1,7 @@
 // Trade (yellow) progress cards implemented in slice 3.
 
-import type { Card, CardCounts, GameState, MasterMerchantPayload, MerchantFleetPayload, MerchantPayload, ResourceMonopolyPayload, RuleSet, TradeMonopolyPayload } from "@catan/shared";
+import type { Card, CardCounts, CommercialHarborPayload, GameState, MasterMerchantPayload, MerchantFleetPayload, MerchantPayload, ResourceMonopolyPayload, RuleSet, TradeMonopolyPayload } from "@catan/shared";
+import { startInteraction } from "../../interactions/queue.js";
 import { CARDS, COMMODITIES, RESOURCES, addCommodities, addResources, isCommodity, playerHolds, playerMinus, playerPlus, subtractCommodities, subtractResources, totalAllCards } from "../../resources.js";
 import { getGeometry } from "../../geometryCache.js";
 import { illegal, requirePlayer, updatePlayer } from "../../reducers/helpers.js";
@@ -120,4 +121,47 @@ export const masterMerchant: ProgressCardImpl = {
   },
 };
 
-export const TRADE_CARDS: ProgressCardImpl[] = [resourceMonopoly, tradeMonopoly, merchantFleet, merchant, masterMerchant];
+/**
+ * Offer each opponent one of your resources; each gives back a commodity of
+ * their choice (if they have any). The initiator picks the offers; the
+ * responses run through the interaction queue.
+ */
+export const commercialHarbor: ProgressCardImpl = {
+  id: "commercialHarbor",
+  options(state, _ruleSet, playerId) {
+    const me = state.players.find((p) => p.id === playerId)!;
+    const opponents = state.players.filter((p) => p.id !== playerId && COMMODITIES.some((c) => p.commodities[c] > 0));
+    if (opponents.length === 0) return [];
+    // One bounded option per resource you hold: offer it to every opponent you can cover.
+    return RESOURCES.filter((r) => me.resources[r] > 0).map((r) => {
+      const offers: Record<number, import("@catan/shared").Resource> = {};
+      let left = me.resources[r];
+      for (const o of opponents) {
+        if (left === 0) break;
+        offers[o.id] = r;
+        left--;
+      }
+      return { offers };
+    });
+  },
+  apply(state, _ruleSet, playerId, payload) {
+    const { offers } = (payload ?? {}) as CommercialHarborPayload;
+    const me = requirePlayer(state, playerId);
+    const entries = Object.entries(offers ?? {}).map(([id, r]) => [Number(id), r] as const);
+    if (entries.length === 0) illegal("the commercial harbor needs at least one offer");
+    const needed: Partial<Record<import("@catan/shared").Resource, number>> = {};
+    for (const [id, r] of entries) {
+      if (id === playerId) illegal("you cannot offer to yourself");
+      requirePlayer(state, id);
+      if (!RESOURCES.includes(r)) illegal("offers are resources");
+      needed[r] = (needed[r] ?? 0) + 1;
+    }
+    for (const [r, n] of Object.entries(needed) as [import("@catan/shared").Resource, number][]) {
+      if (me.resources[r] < n) illegal(`you do not hold ${n} ${r}`);
+    }
+    const responders = entries.map(([id]) => id).filter((id) => COMMODITIES.some((c) => state.players.find((p) => p.id === id)!.commodities[c] > 0));
+    return startInteraction(state, { kind: "commercialHarbor", sourcePlayerId: playerId, sourceCardId: "commercialHarbor", responders, payload: { offers } });
+  },
+};
+
+export const TRADE_CARDS: ProgressCardImpl[] = [resourceMonopoly, tradeMonopoly, merchantFleet, merchant, masterMerchant, commercialHarbor];

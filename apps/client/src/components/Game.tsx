@@ -72,12 +72,22 @@ function bankOf(game: GameState, card: Card): number {
 
 type Mode =
   | { kind: "idle" }
-  | { kind: "knight" }
+  /** The base-game Knight card: pick the robber's hex. */
+  | { kind: "devKnight" }
+  /** Cities & Knights knights. */
+  | { kind: "buildKnight"; vertices: Set<VertexId> }
+  | { kind: "knightMenu"; vertex: VertexId }
+  | { kind: "moveKnight"; from: VertexId; targets: Set<VertexId> }
+  /** Answering another player's card on the board. */
+  | { kind: "respondVertex"; vertices: Set<VertexId>; decline: boolean }
+  | { kind: "respondEdge"; edges: Set<EdgeId>; decline: boolean }
   | { kind: "roadBuilding"; edges: EdgeId[] }
   | { kind: "victim"; hex: HexId; victims: number[]; viaKnight: boolean }
   /** Progress cards that target the board: one hex (Bishop, Merchant), one vertex (Engineer, Medicine), two hexes (Inventor). */
   | { kind: "progressHex"; cardId: string; hexes: Set<HexId> }
   | { kind: "progressVertex"; cardId: string; vertices: Set<VertexId> }
+  /** A card whose payload is an edge (Diplomat): pick it on the board. */
+  | { kind: "progressEdge"; cardId: string; edges: Set<EdgeId> }
   | { kind: "inventor"; first?: HexId };
 
 type Dialog =
@@ -133,6 +143,31 @@ export function Game({ net, game, ruleSet, me }: Props) {
   const metropolisVertexSet = useMemo(() => new Set(legal.flatMap((a) => (a.type === "placeMetropolis" ? [a.vertex] : []))), [legal]);
   const knightMoves = useMemo(() => groupByHex(legal, "knight"), [legal]);
 
+  // Cities & Knights knight pieces.
+  const knightBuildVertices = useMemo(() => new Set(legal.flatMap((a) => (a.type === "buildKnight" ? [a.vertex] : []))), [legal]);
+  const actableKnights = useMemo(() => new Set(legal.flatMap((a) => (a.type === "activateKnight" || a.type === "promoteKnight" ? [a.vertex] : a.type === "moveKnight" ? [a.from] : []))), [legal]);
+  const knightMoveTargetsFrom = (from: VertexId) => new Set(legal.flatMap((a) => (a.type === "moveKnight" && a.from === from ? [a.to] : [])));
+  // A response owed to someone's card.
+  const responseOptions = useMemo(() => legal.flatMap((a) => (a.type === "respondInteraction" ? [a.payload] : [])), [legal]);
+  const responseShape = useMemo(() => {
+    if (responseOptions.length === 0) return null;
+    const objs = responseOptions.map((o) => (o ?? {}) as Record<string, unknown>);
+    const decline = objs.some((o) => Object.keys(o).length === 0);
+    const vertices = objs.flatMap((o) => (typeof o.vertex === "string" ? [o.vertex as VertexId] : []));
+    const edges = objs.flatMap((o) => (typeof o.edge === "string" ? [o.edge as EdgeId] : []));
+    if (vertices.length > 0) return { kind: "vertex" as const, vertices: new Set(vertices), decline };
+    if (edges.length > 0) return { kind: "edge" as const, edges: new Set(edges), decline };
+    return { kind: "list" as const, decline };
+  }, [responseOptions]);
+  const mustRespond = game.turn.phase === "respond" && game.pendingInteraction?.currentResponder === me;
+  const owesForcedDiscard = game.turn.phase === "forcedDiscard" && (game.discardRequests ?? []).some((r) => r.playerId === me);
+  useEffect(() => {
+    // A board-shaped response is entered automatically so the prompt is unmissable.
+    if (mustRespond && responseShape?.kind === "vertex") setMode({ kind: "respondVertex", vertices: responseShape.vertices, decline: responseShape.decline });
+    if (mustRespond && responseShape?.kind === "edge") setMode({ kind: "respondEdge", edges: responseShape.edges, decline: responseShape.decline });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mustRespond, responseShape]);
+
   const canPlay = (cardId: string) =>
     legal.some((a) => a.type === "playDevCard" && a.cardId === cardId);
   const progressPayloads = (cardId: string): unknown[] =>
@@ -153,6 +188,10 @@ export function Game({ net, game, ruleSet, me }: Props) {
     }
     if (cardId === "engineer" || cardId === "medicine") {
       setMode({ kind: "progressVertex", cardId, vertices: new Set((payloads as { vertex: VertexId }[]).map((p) => p.vertex)) });
+      return;
+    }
+    if (cardId === "diplomat") {
+      setMode({ kind: "progressEdge", cardId, edges: new Set((payloads as { edge: EdgeId }[]).map((p) => p.edge)) });
       return;
     }
     if (cardId === "inventor") {
@@ -184,12 +223,24 @@ export function Game({ net, game, ruleSet, me }: Props) {
     const none = { vertices: new Set<VertexId>(), edges: new Set<EdgeId>(), hexes: new Set<HexId>(), selectedEdges: new Set<EdgeId>() };
     if (over) return none;
     switch (mode.kind) {
-      case "knight":
+      case "devKnight":
         return { ...none, hexes: new Set(knightMoves.keys()) };
+      case "buildKnight":
+        return { ...none, vertices: mode.vertices };
+      case "knightMenu":
+        return { ...none, knights: new Set([mode.vertex]) };
+      case "moveKnight":
+        return { ...none, vertices: mode.targets, knights: new Set([mode.from]) };
+      case "respondVertex":
+        return { ...none, vertices: mode.vertices };
+      case "respondEdge":
+        return { ...none, edges: mode.edges };
       case "progressHex":
         return { ...none, hexes: mode.hexes };
       case "progressVertex":
         return { ...none, vertices: mode.vertices };
+      case "progressEdge":
+        return { ...none, edges: mode.edges };
       case "inventor": {
         const hexes = new Set<HexId>();
         for (const p of inventorHexes) {
@@ -211,11 +262,28 @@ export function Game({ net, game, ruleSet, me }: Props) {
           edges: roadEdges,
           hexes: new Set(robberMoves.keys()),
           selectedEdges: new Set<EdgeId>(),
+          knights: actableKnights,
         };
     }
-  }, [mode, over, knightMoves, roadBuildingEdges, settlementVertices, cityVertices, roadEdges, robberMoves, downgradeVertices, inventorHexes, wallVertices, metropolisVertexSet]);
+  }, [mode, over, knightMoves, roadBuildingEdges, settlementVertices, cityVertices, roadEdges, robberMoves, downgradeVertices, inventorHexes, wallVertices, metropolisVertexSet, actableKnights]);
+
+  const onKnight = (v: VertexId) => {
+    if (mode.kind === "idle" && actableKnights.has(v)) setMode({ kind: "knightMenu", vertex: v });
+  };
 
   const onVertex = (v: VertexId) => {
+    if (mode.kind === "buildKnight") {
+      if (mode.vertices.has(v)) sendAction({ type: "buildKnight", vertex: v });
+      return;
+    }
+    if (mode.kind === "moveKnight") {
+      if (mode.targets.has(v)) sendAction({ type: "moveKnight", from: mode.from, to: v });
+      return;
+    }
+    if (mode.kind === "respondVertex") {
+      if (mode.vertices.has(v)) sendAction({ type: "respondInteraction", payload: { vertex: v } });
+      return;
+    }
     if (mode.kind === "progressVertex") {
       if (mode.vertices.has(v)) sendAction({ type: "playProgressCard", cardId: mode.cardId, payload: { vertex: v } });
       return;
@@ -228,6 +296,14 @@ export function Game({ net, game, ruleSet, me }: Props) {
   };
 
   const onEdge = (e: EdgeId) => {
+    if (mode.kind === "progressEdge") {
+      if (mode.edges.has(e)) sendAction({ type: "playProgressCard", cardId: mode.cardId, payload: { edge: e } });
+      return;
+    }
+    if (mode.kind === "respondEdge") {
+      if (mode.edges.has(e)) sendAction({ type: "respondInteraction", payload: { edge: e } });
+      return;
+    }
     if (mode.kind === "roadBuilding") {
       if (mode.edges.includes(e)) {
         setMode({ kind: "roadBuilding", edges: mode.edges.filter((x) => x !== e) });
@@ -267,7 +343,7 @@ export function Game({ net, game, ruleSet, me }: Props) {
       if (pair) sendAction({ type: "playProgressCard", cardId: "inventor", payload: pair });
       return;
     }
-    if (mode.kind === "knight") {
+    if (mode.kind === "devKnight") {
       const victims = knightMoves.get(h);
       if (victims) moveRobberTo(h, victims, true);
       return;
@@ -298,7 +374,15 @@ export function Game({ net, game, ruleSet, me }: Props) {
 
       <div className="layout">
         <div className="board-wrap">
-          <Board game={game} ruleSet={ruleSet} targets={targets} onVertex={onVertex} onEdge={onEdge} onHex={onHex} />
+          <Board game={game} ruleSet={ruleSet} targets={targets} onVertex={onVertex} onEdge={onEdge} onHex={onHex} onKnight={onKnight} />
+          {ruleSet.citiesAndKnights && (
+            <div className="ck-strip" data-testid="ck-strip">
+              <span>⛵ barbarians <b>{game.barbarianPosition}</b>/{ruleSet.citiesAndKnights.barbarianTrackLength}</span>
+              <span>🎲 event: {game.eventDie ? (game.eventDie === "barbarian" ? "barbarians" : `${game.eventDie} gate`) : "—"}</span>
+              <span>▶ {current.name}{isMyTurn ? " (you)" : ""}</span>
+              <span className="muted">knights: bright = active, number = strength</span>
+            </div>
+          )}
           {game.dice && (
             <div className="dice" aria-label="dice">
               <span>{game.dice[0]}</span>
@@ -351,7 +435,7 @@ export function Game({ net, game, ruleSet, me }: Props) {
                       disabled={!playable}
                       title={def?.kind === "victoryPoint" ? "Counts toward victory, revealed when you win" : undefined}
                       onClick={() => {
-                        if (id === "knight") setMode({ kind: "knight" });
+                        if (id === "knight") setMode({ kind: "devKnight" });
                         else if (id === "roadBuilding") setMode({ kind: "roadBuilding", edges: [] });
                         else if (id === "monopoly") setDialog("monopoly");
                         else if (id === "yearOfPlenty") setDialog("yearOfPlenty");
@@ -414,11 +498,17 @@ export function Game({ net, game, ruleSet, me }: Props) {
               {mode.kind !== "idle" ? (
                 <div className="row">
                   <span className="muted">
-                    {mode.kind === "knight" && "Pick a hex for the robber."}
+                    {mode.kind === "devKnight" && "Pick a hex for the robber."}
                     {mode.kind === "roadBuilding" && `Pick ${2 - mode.edges.length} more road${mode.edges.length === 1 ? "" : "s"}.`}
                     {mode.kind === "victim" && "Steal from:"}
+                    {mode.kind === "buildKnight" && "Build a knight: pick an empty spot next to your road."}
+                    {mode.kind === "moveKnight" && "Move the knight: pick a destination (a weaker enemy knight there is pushed away)."}
+                    {mode.kind === "respondVertex" && `${responseTitle(game, ruleSet)} — pick on the board.`}
+                    {mode.kind === "respondEdge" && `${responseTitle(game, ruleSet)} — pick an edge.`}
+                    {mode.kind === "knightMenu" && `Knight (level ${game.board.knights[mode.vertex]?.level ?? "?"}, ${game.board.knights[mode.vertex]?.active ? "active" : "inactive"}):`}
                     {mode.kind === "progressHex" && (mode.cardId === "bishop" ? "Bishop: pick the robber's new hex." : "Merchant: pick a hex next to one of your buildings.")}
                     {mode.kind === "progressVertex" && (mode.cardId === "engineer" ? "Engineer: pick a city to wall." : "Medicine: pick a settlement to upgrade.")}
+                    {mode.kind === "progressEdge" && "Diplomat: pick an open road to remove (your own may be re-placed)."}
                     {mode.kind === "inventor" && (mode.first ? "Inventor: pick the second hex to swap with." : "Inventor: pick the first hex.")}
                   </span>
                   {mode.kind === "victim" &&
@@ -432,12 +522,30 @@ export function Game({ net, game, ruleSet, me }: Props) {
                         {game.players.find((p) => p.id === v)?.name}
                       </button>
                     ))}
+                  {mode.kind === "knightMenu" && (
+                    <>
+                      {legal.some((a) => a.type === "activateKnight" && a.vertex === mode.vertex) && (
+                        <button className="small primary" onClick={() => sendAction({ type: "activateKnight", vertex: mode.vertex })}>Activate ({CARD_ICON.wheat}1)</button>
+                      )}
+                      {legal.some((a) => a.type === "promoteKnight" && a.vertex === mode.vertex) && (
+                        <button className="small" onClick={() => sendAction({ type: "promoteKnight", vertex: mode.vertex })}>Promote ({CARD_ICON.sheep}1 {CARD_ICON.ore}1)</button>
+                      )}
+                      {knightMoveTargetsFrom(mode.vertex).size > 0 && (
+                        <button className="small" onClick={() => setMode({ kind: "moveKnight", from: mode.vertex, targets: knightMoveTargetsFrom(mode.vertex) })}>Move</button>
+                      )}
+                    </>
+                  )}
+                  {(mode.kind === "respondVertex" || mode.kind === "respondEdge") && mode.decline && (
+                    <button className="small" onClick={() => sendAction({ type: "respondInteraction", payload: {} })}>Decline</button>
+                  )}
                   {mode.kind === "roadBuilding" && mode.edges.length === 1 && roadBuildingEdges.size === 0 && (
                     <button className="small" onClick={() => sendAction({ type: "playDevCard", cardId: "roadBuilding", payload: { edges: mode.edges } })}>
                       Build just one
                     </button>
                   )}
-                  <button className="small" onClick={() => setMode({ kind: "idle" })}>Cancel</button>
+                  {mode.kind !== "respondVertex" && mode.kind !== "respondEdge" && (
+                    <button className="small" onClick={() => setMode({ kind: "idle" })}>Cancel</button>
+                  )}
                 </div>
               ) : (
                 <div className="row wrap">
@@ -447,6 +555,10 @@ export function Game({ net, game, ruleSet, me }: Props) {
                   {has("buyDevCard") && (
                     <button onClick={() => sendAction({ type: "buyDevCard" })}>Buy dev card</button>
                   )}
+                  {knightBuildVertices.size > 0 && (
+                    <button onClick={() => setMode({ kind: "buildKnight", vertices: knightBuildVertices })}>Build knight ({CARD_ICON.sheep}1 {CARD_ICON.ore}1)</button>
+                  )}
+                  {actableKnights.size > 0 && <span className="muted">Tap a highlighted knight to activate, promote or move it.</span>}
                   {isMyTurn && game.turn.phase === "mainTurn" && (
                     <>
                       <button onClick={() => setDialog("bank")}>Bank / port trade</button>
@@ -472,7 +584,16 @@ export function Game({ net, game, ruleSet, me }: Props) {
         </aside>
       </div>
 
-      {owesDiscard && <DiscardDialog game={game} ruleSet={ruleSet} me={me} />}
+      {(owesDiscard || owesForcedDiscard) && <DiscardDialog game={game} ruleSet={ruleSet} me={me} />}
+      {mustRespond && responseShape?.kind === "list" && (
+        <PickPayload
+          title={responseTitle(game, ruleSet)}
+          options={responseOptions.map((payload) => ({ payload, label: describeResponse(game.pendingInteraction!.kind, payload, ruleSet) }))}
+          onPick={(payload) => sendAction({ type: "respondInteraction", payload })}
+          onClose={() => undefined}
+          mandatory
+        />
+      )}
       {owesProgressDiscard && (
         <Modal title={`Too many progress cards — discard down to ${ruleSet.citiesAndKnights!.progressHandLimit}`}>
           <div className="row wrap">
@@ -556,6 +677,14 @@ function statusText(game: GameState, ruleSet: RuleSet, me: number, mode: Mode): 
   const mine = current.id === me;
   const who = mine ? "You" : current.name;
 
+  if (game.turn.phase === "respond" && game.pendingInteraction) {
+    const who = game.players.find((p) => p.id === game.pendingInteraction?.currentResponder)?.name;
+    return game.pendingInteraction.currentResponder === me ? `${responseTitle(game, ruleSet)} — your answer is needed.` : `Waiting for ${who} to answer ${responseTitle(game, ruleSet).toLowerCase()}.`;
+  }
+  if (game.turn.phase === "forcedDiscard") {
+    const names = (game.discardRequests ?? []).map((r) => (r.playerId === me ? "you" : game.players.find((p) => p.id === r.playerId)?.name)).join(", ");
+    return (game.discardRequests ?? []).some((r) => r.playerId === me) ? "Saboteur! Discard half your hand." : `Saboteur — waiting for ${names} to discard.`;
+  }
   if (game.pendingMetropolis) {
     const who = game.players.find((p) => p.id === game.pendingMetropolis?.playerId)?.name;
     return game.pendingMetropolis.playerId === me
@@ -604,6 +733,8 @@ function statusText(game: GameState, ruleSet: RuleSet, me: number, mode: Mode): 
       return "The barbarians won…";
     case "progressDiscard":
       return "Waiting for a progress-card discard…";
+    case "respond":
+      return "Waiting for a response…";
     case "metropolisPlacement":
       return "Placing a metropolis…";
     case "gameOver":
@@ -697,11 +828,12 @@ function Modal({ title, children, onClose }: { title: string; children: ReactNod
 
 function DiscardDialog({ game, ruleSet, me }: { game: GameState; ruleSet: RuleSet; me: number }) {
   const player = game.players.find((p) => p.id === me)!;
-  const need = discardCountFor(game, me);
+  const need = discardCountFor(game, me, ruleSet);
   const cards = cardsIn(ruleSet);
   const { get, bump, total, asPartial } = useCounts(cards);
+  const reason = game.turn.phase === "forcedDiscard" ? (game.discardRequests?.find((r) => r.playerId === me)?.reason ?? "forced") : "seven";
   return (
-    <Modal title={`A 7 was rolled — discard ${need} cards`}>
+    <Modal title={reason === "seven" ? `A 7 was rolled — discard ${need} cards` : `${reason === "saboteur" ? "Saboteur!" : "Forced discard —"} discard ${need} cards`}>
       <Counter cards={cards} get={get} bump={(c, d) => bump(c, d, heldOf(player, c))} limit={(c) => heldOf(player, c)} />
       <div className="row end">
         <span className="muted">{total}/{need}</span>
@@ -891,6 +1023,35 @@ function PlayerTradeDialog({ game, ruleSet, me, onClose }: { game: GameState; ru
   );
 }
 
+function responseTitle(game: GameState, ruleSet: RuleSet): string {
+  const pi = game.pendingInteraction;
+  if (!pi) return "";
+  const from = game.players.find((p) => p.id === pi.sourcePlayerId)?.name ?? "someone";
+  const card = pi.sourceCardId ? ruleSet.citiesAndKnights?.progressCards.find((d) => d.id === pi.sourceCardId)?.label ?? pi.sourceCardId : undefined;
+  switch (pi.kind) {
+    case "commercialHarbor":
+      return `${from}'s Commercial Harbor: give a commodity for their ${String((pi.payload as { offers: Record<number, string> }).offers[pi.currentResponder])}`;
+    case "wedding":
+      return `${from}'s Wedding: give 2 cards`;
+    case "deserterChoose":
+      return `${from}'s Deserter: choose the knight you lose`;
+    case "deserterPlace":
+      return "Deserter: place the knight you gained";
+    case "diplomatReplace":
+      return "Diplomat: re-place your road";
+    case "displaceKnight":
+      return `${card ? `${from}'s ${card}` : `${from}'s knight`}: your knight was pushed — choose where it goes`;
+  }
+}
+
+function describeResponse(kind: NonNullable<GameState["pendingInteraction"]>["kind"], payload: unknown, _ruleSet: RuleSet): string {
+  const p = (payload ?? {}) as Record<string, unknown>;
+  if (Object.keys(p).length === 0) return kind === "commercialHarbor" ? "I have no commodity to give" : "Decline";
+  if (kind === "commercialHarbor") return `${CARD_ICON[p.commodity as Card]} ${String(p.commodity)}`;
+  if (kind === "wedding") return Object.entries(p.cards as Record<string, number>).map(([c, n]) => `${n} ${CARD_ICON[c as Card]} ${c}`).join(" + ");
+  return JSON.stringify(payload);
+}
+
 /** Human-readable label for a progress-card payload, for the picker. */
 function describePayload(cardId: string, payload: unknown, game: GameState, ruleSet: RuleSet): string {
   const p = (payload ?? {}) as Record<string, unknown>;
@@ -926,9 +1087,9 @@ function describePayload(cardId: string, payload: unknown, game: GameState, rule
   }
 }
 
-function PickPayload({ title, options, onPick, onClose }: { title: string; options: { payload: unknown; label: string }[]; onPick: (payload: unknown) => void; onClose: () => void }) {
+function PickPayload({ title, options, onPick, onClose, mandatory }: { title: string; options: { payload: unknown; label: string }[]; onPick: (payload: unknown) => void; onClose: () => void; mandatory?: boolean }) {
   return (
-    <Modal title={title} onClose={onClose}>
+    <Modal title={title} onClose={mandatory ? undefined : onClose}>
       <div className="row wrap">
         {options.map((o, i) => (
           <button key={i} className="chip" onClick={() => { onPick(o.payload); onClose(); }}>

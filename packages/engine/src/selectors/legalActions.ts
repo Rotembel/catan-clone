@@ -12,10 +12,11 @@ import { discardCountFor } from "../reducers/dice.js";
 import { pieceCounts, pieceLimitsOf } from "../reducers/helpers.js";
 import { canBuildImprovement } from "../reducers/improve.js";
 import { cityVertices } from "../reducers/barbarians.js";
-import { knightCounts, knightReachableVertices, legalKnightVertices } from "../reducers/knights.js";
+import { knightCounts, knightMoveTargets, legalKnightVertices } from "../reducers/knights.js";
 import { playableProgressCards } from "../reducers/progress.js";
 import { metropolisEligibleCities } from "../reducers/metropolis.js";
 import { canBuildWall, legalWallVertices } from "../reducers/walls.js";
+import { interactionOptions } from "../reducers/respond.js";
 import { stealTargetsAt } from "../reducers/robber.js";
 import { CARDS, COMMODITIES, IMPROVEMENT_TRACKS, RESOURCES, canAfford, isCommodity } from "../resources.js";
 import {
@@ -134,9 +135,16 @@ export function legalActions(state: GameState, ruleSet: RuleSet, playerId: numbe
       break;
     }
 
-    case "discard": {
-      if (!(state.pendingDiscards ?? []).includes(playerId)) break;
+    case "discard":
+    case "forcedDiscard": {
+      const owed = state.turn.phase === "forcedDiscard" ? (state.discardRequests ?? []).some((r) => r.playerId === playerId) : (state.pendingDiscards ?? []).includes(playerId);
+      if (!owed) break;
       actions.push({ type: "discardCards", discard: canonicalDiscard(state, playerId, ruleSet) });
+      break;
+    }
+
+    case "respond": {
+      for (const payload of interactionOptions(state, ruleSet, playerId)) actions.push({ type: "respondInteraction", payload });
       break;
     }
 
@@ -225,7 +233,8 @@ export function legalActions(state: GameState, ruleSet: RuleSet, playerId: numbe
             }
           }
           if (knight.active && !knight.activatedThisTurn) {
-            for (const to of knightReachableVertices(state, ruleSet, playerId, vertex)) {
+            const targets = knightMoveTargets(state, ruleSet, playerId, vertex, knight.level);
+            for (const to of [...targets.free, ...targets.displace]) {
               actions.push({ type: "moveKnight", from: vertex, to });
             }
           }

@@ -46,6 +46,8 @@ export interface BoardTargets {
   hexes: Set<HexId>;
   /** Edges already picked in a multi-step choice (Road Building). */
   selectedEdges: Set<EdgeId>;
+  /** Knights the player may act with (tap to get Activate / Promote / Move). */
+  knights?: Set<VertexId>;
 }
 
 export interface BoardProps {
@@ -55,9 +57,10 @@ export interface BoardProps {
   onVertex: (v: VertexId) => void;
   onEdge: (e: EdgeId) => void;
   onHex: (h: HexId) => void;
+  onKnight?: (v: VertexId) => void;
 }
 
-export function Board({ game, ruleSet, targets, onVertex, onEdge, onHex }: BoardProps) {
+export function Board({ game, ruleSet, targets, onVertex, onEdge, onHex, onKnight }: BoardProps) {
   const layout = ruleSet.board;
   const geometry = getGeometry(layout);
 
@@ -291,9 +294,10 @@ export function Board({ game, ruleSet, targets, onVertex, onEdge, onHex }: Board
         if (!k) return null;
         const color = PLAYER_COLORS[k.playerId] ?? "#000";
         const r = HEX * 0.24;
+        const tappable = targets.knights?.has(id) ?? false;
         return (
-          <g key={`k-${id}`} opacity={k.active ? 1 : 0.55}>
-            <circle cx={p.x} cy={p.y} r={r} fill={color} stroke="#1f2430" strokeWidth={2} />
+          <g key={`k-${id}`} opacity={k.active ? 1 : 0.55} className={tappable ? "clickable" : undefined} onClick={tappable ? () => onKnight?.(id) : undefined}>
+            <circle cx={p.x} cy={p.y} r={r} fill={color} stroke={tappable ? "#ffd166" : "#1f2430"} strokeWidth={tappable ? 3 : 2} />
             <text x={p.x} y={p.y + 1} textAnchor="middle" dominantBaseline="middle" fontSize={r * 1.2} fontWeight={700} fill="#fff">
               {k.level}
             </text>

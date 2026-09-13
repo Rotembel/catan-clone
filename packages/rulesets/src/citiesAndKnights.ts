@@ -50,6 +50,13 @@ export const CITIES_AND_KNIGHTS_RULES: CitiesAndKnightsRules = {
     { id: "engineer", label: "Engineer", category: "science", count: 1, timing: "mainTurn" },
     { id: "medicine", label: "Medicine", category: "science", count: 2, timing: "mainTurn" },
     { id: "crane", label: "Crane", category: "science", count: 2, timing: "mainTurn" },
+    // slice 5
+    { id: "commercialHarbor", label: "Commercial Harbor", category: "trade", count: 2, timing: "mainTurn" },
+    { id: "wedding", label: "Wedding", category: "politics", count: 2, timing: "mainTurn" },
+    { id: "saboteur", label: "Saboteur", category: "politics", count: 2, timing: "mainTurn" },
+    { id: "deserter", label: "Deserter", category: "politics", count: 2, timing: "mainTurn" },
+    { id: "diplomat", label: "Diplomat", category: "politics", count: 2, timing: "mainTurn" },
+    { id: "intrigue", label: "Intrigue", category: "politics", count: 2, timing: "mainTurn" },
   ],
   progressHandLimit: 4,
   metropolis: { claimLevel: 4, takeLevel: 5, victoryPoints: 2 },

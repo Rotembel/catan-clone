@@ -137,6 +137,17 @@ export function chooseAction(
     return { action: bestBy(downgrades, (a) => -vertexValue(state, ruleSet, a.vertex)), rng };
   }
 
+  // Cities & Knights: a response owed to someone's card — the first legal answer,
+  // except that a displaced or deserted knight goes to the best spot.
+  const answers = ofType(options, "respondInteraction");
+  if (answers.length > 0) {
+    const withVertex = answers.filter((a) => (a.payload as { vertex?: string } | undefined)?.vertex);
+    if (withVertex.length > 0) {
+      return { action: bestBy(withVertex, (a) => vertexValue(state, ruleSet, (a.payload as { vertex: string }).vertex)), rng };
+    }
+    return { action: answers[0], rng };
+  }
+
   // Cities & Knights: over the progress hand limit — drop the first card.
   const progressDiscards = ofType(options, "discardProgressCard");
   if (progressDiscards.length > 0) return { action: progressDiscards[0], rng };
