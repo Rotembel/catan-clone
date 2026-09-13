@@ -6,8 +6,8 @@ exists, how it's verified, what's decided, what's next.
 
 Repo: https://github.com/Rotembel/catan-clone (created private; the GitHub
 API reported it **public** on 2026-09-13 — not changed by the agent) · local:
-`~/Desktop/catan-starter-docs` · `main` is green and pushed as of the iPad Build-Knight
-touch fix (client) plus the docs commit after it.
+`~/Desktop/catan-starter-docs` · `main` is green and pushed as of the iPad playtest round 2
+(stuck trade + bot pacing) plus the docs commit after it.
 
 ## Phases
 
@@ -24,8 +24,8 @@ touch fix (client) plus the docs commit after it.
 Also done outside the phase list: client server-URL derives from the
 page's hostname (LAN play), `.env.example`, `HANDOFF.md`.
 
-**232 tests** across the workspace (engine 153, rulesets 25, client 10,
-cli 16, server 28; `@catan/bot` has none of its own). `pnpm typecheck` clean
+**245 tests** across the workspace (engine 153, rulesets 25, client 16,
+cli 16, server 35; `@catan/bot` has none of its own). `pnpm typecheck` clean
 in all 7 packages.
 
 ### Cities & Knights plan (Phase 5, in slices — owner chose "full C&K, in slices")
@@ -453,6 +453,123 @@ Tests: `pnpm test`. Types: `pnpm typecheck`.
   `v0.6.0-home.1` is still the gate for tagging.
 - Colyseus `maxClients` is set above 4 on purpose (per-seat limit is
   enforced in `onJoin`) so a full room stays listed for `joinOrCreate`.
+
+## iPad playtest round 2 — stuck trade + invisible bot turns (2026-09-14)
+
+### 1. The stuck trade — root cause and fix
+
+**Symptom**: a human on the iPad opened a trade and the game "got stuck".
+
+**Root cause** (reproduced in the in-app browser at an iPad-landscape
+viewport, 1024×660): the **"Propose a trade" modal did not fit on screen
+and could not scroll**. In Cities & Knights the form has 8 give rows + 8
+want rows + player chips (+ dev-card rows when that house rule is on): 741 px
+tall. `.modal-backdrop` was a fixed, centred, non-scrolling grid, so both the
+**Offer** and the **Cancel** button sat below the bottom edge. A complete,
+legal selection had no reachable Confirm and no reachable Cancel — exactly
+the state the spec forbids. Nothing was wrong server-side: no offer had been
+sent, `pendingTrade` was empty, and the room itself was never blocked.
+(Portrait iPads fit, which is why it looked intermittent.)
+
+**Fix** (client only):
+- `Modal` now has a scrolling body and a **pinned footer** (`.modal-body` /
+  `.modal-footer`, `max-height: 100dvh − 24px`). The primary action and
+  Cancel are always on screen, at any viewport.
+- The footer carries a live **summary of the selection** ("To Bot Ada: give
+  2 🌲 for 1 ⛰️", "4 🐑 → 1 ⛰️") or the hint of what is still missing, so a
+  touch user can see what will be sent; the primary button is disabled until
+  the offer is complete.
+- The dialogs' selection → `TradeOffer` mapping moved to a pure module,
+  `apps/client/src/components/tradeOffer.ts` (`bankOffer`, `playerOffer`,
+  `sideSummary`), unit-tested against the engine
+  (`apps/client/test/tradeOffer.test.ts`, 6 tests): every complete selection
+  yields an offer the engine accepts; incomplete ones yield none.
+- Bank/player trade forms close themselves if it stops being the player's
+  main turn (restart, timeout) — no dialog can outlive its legality.
+- Same footer treatment for the 7 / forced-discard dialog and the
+  incoming-offer Accept/Decline dialog.
+
+**Trade paths audited** (engine → legal actions → client → confirm → refresh):
+- Bank 4:1, generic port 3:1, resource port 2:1, Merchant 2:1, commodity
+  3:1 / 2:1 with the Trade improvement: one path (`bankOffer` → `proposeTrade`
+  without `toPlayerId`), resolved immediately by the engine — nothing
+  pending, legal actions refresh on the broadcast. Chips are disabled when
+  the ratio can't be paid or the bank is empty; footer says why.
+- Player-to-player (incl. commodities in C&K, dev cards under house rule #1):
+  `playerOffer` → `proposeTrade` with `toPlayerId` → `pendingTrade`; only the
+  counterpart has legal actions (`respondTrade` accept/decline); the proposer
+  sees "Waiting for X…", and "Trade with player" is disabled while one is on
+  the table. Accept moves cards; decline just clears it. No counter-offers
+  (not in the engine; not added).
+- Cancel: the dialog is local state; Cancel never sends anything.
+- Reconnect/restart mid-trade: the dialog is not persisted (a refresh drops
+  the form; nothing was spent). A *pending* offer is persisted with the
+  state; on restart the responder's answer is still owed and, for a bot, is
+  produced on rejoin (server test).
+- Known limitation, unchanged: a human proposer cannot withdraw an offer
+  made to a *human* who never answers (no `withdrawTrade` action; the
+  responder can decline on return). Not a bot issue.
+
+### 2. Bot turn pacing (presentation only)
+
+Bots **were rolling correctly before** — the persisted games show their
+production and `dice` values — but with a single 700 ms pause per action
+a two-bot round took ~1.5 s and nobody saw the roll.
+
+Architecture (`apps/server/src/botPacing.ts`, `CatanRoom.scheduleBots`):
+- The room still has **one** bot timer. `scheduleBots` now **chooses the
+  bot's move first** (pure: seat rng + current state), picks the pause from
+  *what* the move is, and applies it after the pause only if the state
+  object is still the one it was chosen for (otherwise it re-chooses).
+  The seat's rng advances only when the move is actually applied, so
+  **timing never touches randomness**; the engine is untouched; nothing
+  wall-clock is persisted; a restart simply re-chooses the same
+  deterministic move (`lastApplied` is in-memory only).
+- Pauses (HOME defaults, `HOME_BOT_PACING`): before roll **800 ms**, dice
+  linger after own roll **1100 ms**, between visible actions **650 ms**,
+  before end turn **550 ms** (+ the linger if the bot rolled and then ends),
+  mandatory answers (discard, trade reply, card response) **650 ms**.
+  Env: `BOT_DELAY_MS` keeps its old uniform meaning (tests use 0);
+  `BOT_BEFORE_ROLL_MS`, `BOT_AFTER_ROLL_MS`, `BOT_BETWEEN_ACTIONS_MS`,
+  `BOT_BEFORE_END_TURN_MS`, `BOT_RESPONSE_MS` override individually.
+- New protocol event `EVT.action`: the server broadcasts the applied
+  `ActionEnvelope` right before each `game` state. The client's **ticker**
+  (bottom of the board) narrates it from that authoritative envelope —
+  "Bot Ada rolled 8 (3+5) · ⛵ barbarians", "Bot Ada built a road",
+  "Bot Grace declined the trade" — and adds an intent line from state
+  ("Bot Ada is rolling…", "… is thinking…", "… is considering the trade…").
+  The client invents no actions (`narrate.ts`, pure, unit-tested).
+- Tests: `botPacing.test.ts` (4: windows, turn shape, env parsing) and a
+  wire-level room test that reboots the server with scaled pacing and
+  asserts the gaps between broadcast bot actions.
+
+### 3. Bot trade safety (verified, no change needed)
+
+- Bots only ever *propose* bank trades (the engine lists no player-to-player
+  offers in `legalActions`); each resolves at once, so no spam and nothing
+  pending on a bot.
+- A bot **declines every human offer**, deterministically and independent
+  of its rng (`chooseAction` picks `respondTrade accept:false` first).
+- `nextActor` names the responder of a pending trade, so the bot timer
+  fires for it; on a restart with an offer pending the bot answers once on
+  the human's rejoin (server test "trading with bots": decline over the
+  wire, restart mid-offer, no duplicate).
+
+### 4. Live drill (in-app browser, 1024×660, 1 human + 2 bots, C&K)
+
+Room created via the UI, setup placed, several full bot rounds observed
+through the ticker: "Bot Ada is rolling…" → "Bot Ada rolled 11 (6+5) · ⛵
+barbarians" (dice visible) → "Bot Ada moved the robber" → "Bot Ada ended
+the turn" → "Bot Grace rolled 9 …". Human 7 → discard dialog (pinned
+footer). Bank dialog with nothing affordable: all give chips disabled,
+footer hint, **Cancel** returned to the turn with the hand unchanged.
+Human→Bot Ada player trade: summary "To Bot Ada: give 2 🌲 for 1 ⛰️",
+Offer enabled only when complete, footer on screen at 660 px; bot declined;
+End turn available again. Bank 4:1: 5 🐑 → 1 🐑 + 1 ⛰️, ticker "You traded
+with the bank". Refresh with a filled-in trade form open: seat reclaimed,
+no dialog, nothing spent, turn continues. Room never stuck. **Not
+exercised live**: a port trade (no port access in this game), Merchant,
+dev-card trades (house rule off in C&K), a real iPad.
 
 ## iPad playtest fix — Build Knight tap did not commit (2026-09-13)
 
