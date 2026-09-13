@@ -18,13 +18,13 @@ API reported it **public** on 2026-09-13 — not changed by the agent) · local:
 | 2 Real-time multiplayer | done | `4360969` | 8 socket tests; played live in two browser tabs |
 | 3 Stability | done | `598acf4` | server killed & restarted mid-game twice; both tabs resumed and play continued |
 | 4 House rule #1 (trade dev cards) | done | `9bd4bad` | flag-on/off tests at ruleset, engine, server; live offer of a card |
-| 5 Cities & Knights | **slice 1 of 5 done** (commodities, city improvements, city as 2nd placement, 13 VP) | see git log | 12 engine tests + 4 seeded bot games at 13 VP with card conservation |
+| 5 Cities & Knights | **slices 1–2 of 5 done** (1: commodities + city improvements; 2: event die, barbarians, knights) — paused after slice 2 by owner decision | `d8ec23a`, slice-2 commit | 34 engine tests for the expansion + 4 seeded bot games at 13 VP with card conservation, a barbarian attack, and knights built |
 | 6 Custom content | not started | — | |
 
 Also done outside the phase list: client server-URL derives from the
 page's hostname (LAN play), `.env.example`, `HANDOFF.md`.
 
-**120 tests** across the workspace (engine 76, rulesets 14, client 3,
+**142 tests** across the workspace (engine 98, rulesets 14, client 3,
 cli 12, server 15). `pnpm typecheck` clean in all 6 packages.
 
 ### Cities & Knights plan (Phase 5, in slices — owner chose "full C&K, in slices")
@@ -36,12 +36,47 @@ cli 12, server 15). `pnpm typecheck` clean in all 6 packages.
    Data: `RuleSet.citiesAndKnights` block; `Player.commodities/improvements`;
    `GameState.commodityBank`; action `buildImprovement`. `normalizeState` back-fills
    these on records saved before they existed.
-2. event die + barbarians + knights as pieces (activate/promote/move, barbarian attack,
-   Fortress at politics 3, defender of Catan)
+2. **done** — event die (data: `eventDie` faces; rolled with the dice via one extra
+   `nextInt` draw, so base-game rolls are byte-identical), barbarian track
+   (`barbarianTrackLength` 7) and attack (Catan = sum of *active* knight levels vs.
+   barbarians = number of cities; win → single strongest defender gets
+   `defenderOfCatan` +1 VP; lose → weakest player(s) with cities lose one: automatic
+   for a lone city, otherwise phase `barbarianDowngrade` + action `downgradeCity`;
+   all knights deactivate, ship returns). Knights as pieces on vertices: `buildKnight`
+   (sheep+ore, empty vertex on your road, 2 per level), `activateKnight` (wheat; can't
+   move that turn), `promoteKnight` (sheep+ore; level 3 needs politics ≥ `fortressLevel`),
+   `moveKnight` (active only, along own roads, not through enemy pieces, deactivates).
+   A knight occupies its vertex (no settlement there; distance rule ignores it) and an
+   *enemy* knight blocks road extension and breaks longest road (via
+   `isVertexBlockedFor`). Attack resolves **before** production; the roll resolves after
+   any downgrade choices (`resolveRoll`).
+   State: `BoardState.knights`, `GameState.barbarianPosition/eventDie/pendingDowngrades`,
+   `Player.defenderOfCatan`, `TurnPhase "barbarianDowngrade"`. `normalizeState` back-fills.
+   **Known limitations (slice 2):** tied defence awards nothing (official: progress cards —
+   slice 3); no knight displacement (moving onto a weaker enemy knight) and no
+   "chase the robber" knight action; downgrading can push a player past 5 settlements
+   (no piece-return rule); the C&K rule set still carries the base development deck
+   (progress cards replace it in slice 3); no metropolis immunity / city walls (slice 4).
+   **Bot limitations:** builds at most one knight and keeps it active; never promotes or
+   moves knights; answers a forced downgrade by giving up its lowest-value city. Games
+   still finish on every seed tried.
+   **Client (minimal for this slice):** knights are drawn on the board (level number,
+   dimmed when inactive), the hand panel shows ship position / event die / your knight
+   count / Defender awards, and a forced downgrade is answered by clicking one of your
+   cities. No UI yet to build/activate/promote/move knights (slice 5) — humans can't
+   defend, so barbarians will win in a human-only C&K game.
 3. progress cards (three decks, drawn by event die vs. improvement level; aqueduct at
    science 3)
 4. metropolises (level 4/5), city walls, merchant
 5. client UI for all of the above (slice 1's UI is already in)
+
+## Next track (owner decision after slice 2): HOME STABLE v0.1
+
+Cities & Knights is **paused after slice 2**. Before slice 3, build the playable
+home release described in `docs/planning/`: 5 seats, 3 humans + 2 server-controlled
+bots, large map preset (37 hexes, 3 opening placements each), LAN launcher,
+version surface, tagged known-good build, real Wi-Fi smoke test. Base-game rules
+(plus stable house rules) for that release — not C&K.
 
 ## Future workstreams — planning documents (read before starting either)
 
