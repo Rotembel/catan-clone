@@ -1,0 +1,243 @@
+// Enumerates what a player may legally do right now. Used by the CLI
+// harness and its bots, and by tests that want to drive a whole game
+// without hand-writing every move.
+//
+// Two action spaces are too large to enumerate honestly, and are handled
+// specially: discards (every subset of a hand) return one valid canonical
+// choice, and player-to-player trade proposals (unbounded) are not
+// enumerated at all.
+
+import type { Action, GameState, Resource, RuleSet } from "@catan/shared";
+import { discardCountFor } from "../reducers/dice.js";
+import { PIECE_LIMITS, pieceCounts } from "../reducers/helpers.js";
+import { stealTargetsAt } from "../reducers/robber.js";
+import { RESOURCES, canAfford } from "../resources.js";
+import {
+  legalCityVertices,
+  legalRoadEdges,
+  legalSettlementVertices,
+  legalSetupRoadEdges,
+} from "./building.js";
+import { tradeRatiosFor } from "./production.js";
+
+/** A deterministic, legal discard: shed from the biggest stacks first. */
+export function canonicalDiscard(
+  state: GameState,
+  playerId: number
+): Partial<Record<Resource, number>> {
+  const player = state.players.find((p) => p.id === playerId);
+  const discard: Partial<Record<Resource, number>> = {};
+  if (!player) return discard;
+
+  let remaining = discardCountFor(state, playerId);
+  const pool = RESOURCES.map((r) => ({ resource: r, count: player.resources[r] }))
+    .filter((entry) => entry.count > 0)
+    .sort((a, b) => b.count - a.count || a.resource.localeCompare(b.resource));
+
+  while (remaining > 0) {
+    let progressed = false;
+    for (const entry of pool) {
+      if (remaining === 0) break;
+      const already = discard[entry.resource] ?? 0;
+      if (already >= entry.count) continue;
+      discard[entry.resource] = already + 1;
+      remaining--;
+      progressed = true;
+    }
+    if (!progressed) break;
+  }
+  return discard;
+}
+
+function robberActions(state: GameState, ruleSet: RuleSet, playerId: number): Action[] {
+  const actions: Action[] = [];
+  for (const hex of ruleSet.board.hexes) {
+    if (hex.id === state.board.robberHex) continue;
+    const victims = stealTargetsAt(state, ruleSet, hex.id, playerId);
+    if (victims.length === 0) {
+      actions.push({ type: "moveRobber", hex: hex.id });
+    } else {
+      for (const victim of victims) {
+        actions.push({ type: "moveRobber", hex: hex.id, stealFrom: victim });
+      }
+    }
+  }
+  return actions;
+}
+
+function knightActions(state: GameState, ruleSet: RuleSet, playerId: number): Action[] {
+  const player = state.players.find((p) => p.id === playerId);
+  if (!player || player.hasPlayedDevCardThisTurn) return [];
+  const playable =
+    player.devCards.filter((id) => id === "knight").length -
+    player.devCardsBoughtThisTurn.filter((id) => id === "knight").length;
+  if (playable <= 0) return [];
+
+  return robberActions(state, ruleSet, playerId).map((a) => {
+    const move = a as Extract<Action, { type: "moveRobber" }>;
+    return {
+      type: "playDevCard",
+      cardId: "knight",
+      payload: { hex: move.hex, stealFrom: move.stealFrom },
+    } satisfies Action;
+  });
+}
+
+export function legalActions(state: GameState, ruleSet: RuleSet, playerId: number): Action[] {
+  if (state.winner !== undefined || state.turn.phase === "gameOver") return [];
+
+  const player = state.players.find((p) => p.id === playerId);
+  if (!player) return [];
+  const isCurrent = state.players[state.turn.current]?.id === playerId;
+  const actions: Action[] = [];
+
+  // Anyone offered a trade may answer it, on or off their turn.
+  if (state.pendingTrade?.toPlayerId === playerId) {
+    actions.push({ type: "respondTrade", accept: true });
+    actions.push({ type: "respondTrade", accept: false });
+  }
+
+  switch (state.turn.phase) {
+    case "setupSettlement1":
+    case "setupSettlement2": {
+      if (!isCurrent) break;
+      for (const vertex of legalSettlementVertices(state, ruleSet, playerId, {
+        requireRoadConnection: false,
+      })) {
+        actions.push({ type: "buildSettlement", vertex });
+      }
+      break;
+    }
+
+    case "setupRoad1":
+    case "setupRoad2": {
+      if (!isCurrent || state.setupLastSettlement === undefined) break;
+      for (const edge of legalSetupRoadEdges(state, ruleSet, state.setupLastSettlement)) {
+        actions.push({ type: "buildRoad", edge });
+      }
+      break;
+    }
+
+    case "rollDice": {
+      if (!isCurrent) break;
+      actions.push({ type: "rollDice" });
+      actions.push(...knightActions(state, ruleSet, playerId));
+      break;
+    }
+
+    case "discard": {
+      if (!(state.pendingDiscards ?? []).includes(playerId)) break;
+      actions.push({ type: "discardCards", discard: canonicalDiscard(state, playerId) });
+      break;
+    }
+
+    case "moveRobberAfterSeven": {
+      if (!isCurrent) break;
+      actions.push(...robberActions(state, ruleSet, playerId));
+      break;
+    }
+
+    case "mainTurn": {
+      if (!isCurrent) break;
+      actions.push({ type: "endTurn" });
+
+      const counts = pieceCounts(state, playerId);
+
+      if (canAfford(player.resources, ruleSet.costs.road) && counts.roads < PIECE_LIMITS.roads) {
+        for (const edge of legalRoadEdges(state, ruleSet, playerId)) {
+          actions.push({ type: "buildRoad", edge });
+        }
+      }
+      if (
+        canAfford(player.resources, ruleSet.costs.settlement) &&
+        counts.settlements < PIECE_LIMITS.settlements
+      ) {
+        for (const vertex of legalSettlementVertices(state, ruleSet, playerId, {
+          requireRoadConnection: true,
+        })) {
+          actions.push({ type: "buildSettlement", vertex });
+        }
+      }
+      if (canAfford(player.resources, ruleSet.costs.city) && counts.cities < PIECE_LIMITS.cities) {
+        for (const vertex of legalCityVertices(state, playerId)) {
+          actions.push({ type: "buildCity", vertex });
+        }
+      }
+      if (canAfford(player.resources, ruleSet.costs.devCard) && state.devDeck.length > 0) {
+        actions.push({ type: "buyDevCard" });
+      }
+
+      actions.push(...knightActions(state, ruleSet, playerId));
+
+      if (!player.hasPlayedDevCardThisTurn) {
+        const playable = (cardId: string) =>
+          player.devCards.filter((id) => id === cardId).length -
+          player.devCardsBoughtThisTurn.filter((id) => id === cardId).length;
+
+        if (playable("roadBuilding") > 0) {
+          const edges = legalRoadEdges(state, ruleSet, playerId);
+          const room = PIECE_LIMITS.roads - counts.roads;
+          if (edges.length >= 2 && room >= 2) {
+            actions.push({
+              type: "playDevCard",
+              cardId: "roadBuilding",
+              payload: { edges: [edges[0]!, edges[1]!] },
+            });
+          } else if (edges.length >= 1 && room >= 1) {
+            actions.push({
+              type: "playDevCard",
+              cardId: "roadBuilding",
+              payload: { edges: [edges[0]!] },
+            });
+          }
+        }
+
+        if (playable("yearOfPlenty") > 0) {
+          for (const a of RESOURCES) {
+            for (const b of RESOURCES) {
+              const needed = a === b ? 2 : 1;
+              if (state.bank[a] < needed || state.bank[b] < needed) continue;
+              actions.push({
+                type: "playDevCard",
+                cardId: "yearOfPlenty",
+                payload: { resources: [a, b] },
+              });
+            }
+          }
+        }
+
+        if (playable("monopoly") > 0) {
+          for (const resource of RESOURCES) {
+            actions.push({ type: "playDevCard", cardId: "monopoly", payload: { resource } });
+          }
+        }
+      }
+
+      // Bank/port trades: one ratio's worth of any resource for any other.
+      const ratios = tradeRatiosFor(state, ruleSet, playerId);
+      for (const give of RESOURCES) {
+        const ratio = ratios[give];
+        if (player.resources[give] < ratio) continue;
+        for (const receive of RESOURCES) {
+          if (receive === give || state.bank[receive] < 1) continue;
+          actions.push({
+            type: "proposeTrade",
+            offer: {
+              fromPlayerId: playerId,
+              give: { [give]: ratio },
+              receive: { [receive]: 1 },
+            },
+          });
+        }
+      }
+      break;
+    }
+  }
+
+  return actions;
+}
+
+/** True when this player currently has something they must or may do. */
+export function hasLegalActions(state: GameState, ruleSet: RuleSet, playerId: number): boolean {
+  return legalActions(state, ruleSet, playerId).length > 0;
+}

@@ -1,0 +1,103 @@
+// Phase 1's actual milestone (SPEC.md §7): "a base game is fully playable".
+// These run complete games through the real reducer and check both the
+// outcome and the invariants that should hold across every state it passed
+// through.
+
+import { describe, expect, it } from "vitest";
+import {
+  PIECE_LIMITS,
+  RESOURCES,
+  getGeometry,
+  pieceCounts,
+  totalCards,
+  totalVictoryPoints,
+} from "@catan/engine";
+import type { GameState, RuleSet } from "@catan/shared";
+import { runGame } from "../src/runGame.js";
+
+const SEEDS = ["alpha", "beta", "gamma", "delta"];
+
+/** Every resource card ever printed is either in the bank or in a hand. */
+function totalResourcesInPlay(state: GameState): number {
+  return (
+    totalCards(state.bank) + state.players.reduce((sum, p) => sum + totalCards(p.resources), 0)
+  );
+}
+
+function assertInvariants(state: GameState, ruleSet: RuleSet, expectedResources: number): void {
+  expect(totalResourcesInPlay(state)).toBe(expectedResources);
+
+  for (const r of RESOURCES) {
+    expect(state.bank[r]).toBeGreaterThanOrEqual(0);
+    for (const p of state.players) expect(p.resources[r]).toBeGreaterThanOrEqual(0);
+  }
+
+  for (const p of state.players) {
+    const counts = pieceCounts(state, p.id);
+    expect(counts.roads).toBeLessThanOrEqual(PIECE_LIMITS.roads);
+    expect(counts.settlements).toBeLessThanOrEqual(PIECE_LIMITS.settlements);
+    expect(counts.cities).toBeLessThanOrEqual(PIECE_LIMITS.cities);
+  }
+
+  // The distance rule must hold for the whole board, not just at placement.
+  const geometry = getGeometry(ruleSet.board);
+  for (const [vertex, building] of Object.entries(state.board.buildings)) {
+    if (!building) continue;
+    for (const neighbor of geometry.vertexNeighbors.get(vertex) ?? []) {
+      expect(state.board.buildings[neighbor]).toBeUndefined();
+    }
+  }
+}
+
+describe("a full base game", () => {
+  it("plays to victory", () => {
+    const result = runGame({ seed: "alpha" });
+    expect(result.exhausted).toBe(false);
+    expect(result.winner).toBeDefined();
+
+    const vp = totalVictoryPoints(result.state, result.ruleSet, result.winner!);
+    expect(vp).toBeGreaterThanOrEqual(result.ruleSet.victoryPoints);
+    expect(result.state.turn.phase).toBe("gameOver");
+  });
+
+  it.each(SEEDS)("finishes and holds its invariants throughout (seed %s)", (seed) => {
+    const startingResources = 19 * RESOURCES.length;
+    let checked = 0;
+
+    const result = runGame({
+      seed,
+      onAction: (_envelope, state, ruleSet) => {
+        // Checking every intermediate state is the point — this is the
+        // cheapest place to catch a reducer that leaks or duplicates cards.
+        assertInvariants(state, ruleSet, startingResources);
+        checked++;
+      },
+    });
+
+    expect(checked).toBeGreaterThan(50);
+    expect(result.winner).toBeDefined();
+  });
+
+  it("is reproducible: the same seed replays to the same game", () => {
+    const a = runGame({ seed: "repeatable" });
+    const b = runGame({ seed: "repeatable" });
+    expect(a.winner).toBe(b.winner);
+    expect(a.actions).toBe(b.actions);
+    expect(JSON.stringify(a.state)).toBe(JSON.stringify(b.state));
+  });
+
+  it("gives different games on different seeds", () => {
+    const a = runGame({ seed: "one" });
+    const b = runGame({ seed: "two" });
+    expect(JSON.stringify(a.state)).not.toBe(JSON.stringify(b.state));
+  });
+
+  it("uses the real base board: 19 hexes, 9 ports, 25 dev cards", () => {
+    const { ruleSet, state } = runGame({ seed: "board-check", maxActions: 1 });
+    expect(ruleSet.board.hexes).toHaveLength(19);
+    expect(ruleSet.board.hexes.filter((h) => h.resource === "desert")).toHaveLength(1);
+    expect(ruleSet.board.ports).toHaveLength(9);
+    expect(state.devDeck.length + 0).toBe(25);
+    expect(state.board.robberHex).toBe(ruleSet.board.hexes.find((h) => h.resource === "desert")!.id);
+  });
+});

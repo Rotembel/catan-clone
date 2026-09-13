@@ -77,6 +77,8 @@ export type TurnPhase =
   | "setupSettlement2"
   | "setupRoad2"
   | "rollDice"
+  /** A 7 was rolled; players over the 7-card limit owe a discard (see `pendingDiscards`). */
+  | "discard"
   | "mainTurn"
   | "moveRobberAfterSeven"
   | "gameOver";
@@ -87,6 +89,13 @@ export interface Player {
   resources: Record<Resource, number>;
   /** Dev card ids currently in hand (unplayed). */
   devCards: string[];
+  /**
+   * Dev cards bought this turn — they can't be played until the next turn
+   * (official rule). Cleared on endTurn.
+   */
+  devCardsBoughtThisTurn: string[];
+  /** At most one dev card may be played per turn. Cleared on endTurn. */
+  hasPlayedDevCardThisTurn: boolean;
   playedKnights: number;
   /** Public victory points only — hidden VP dev cards are not included. */
   victoryPoints: number;
@@ -106,7 +115,7 @@ export interface BoardState {
 
 export interface TradeOffer {
   fromPlayerId: number;
-  /** undefined = open offer to all other players, or a bank/port trade. */
+  /** undefined = a bank/port trade, resolved immediately by proposeTrade itself. */
   toPlayerId?: number;
   give: Partial<Record<Resource, number>>;
   receive: Partial<Record<Resource, number>>;
@@ -125,6 +134,18 @@ export interface GameState {
   bank: Record<Resource, number>;
   dice?: [number, number];
   pendingTrade?: TradeOffer;
+  /** Player ids that still owe a discard during the "discard" phase. */
+  pendingDiscards?: number[];
+  /**
+   * Current holders of the two bonus-VP awards. These are *state*, not
+   * derived values: the official tie rule ("you only take it by strictly
+   * beating the holder") depends on who got there first, which the board
+   * alone doesn't say.
+   */
+  longestRoadPlayerId?: number;
+  largestArmyPlayerId?: number;
+  /** During setup, the settlement just placed — the road must connect to it. */
+  setupLastSettlement?: VertexId;
   winner?: number;
   /** Serialized seeded RNG — keeps the engine pure (see CLAUDE.md). */
   rngState: string;
@@ -134,6 +155,10 @@ export interface GameState {
 // Actions
 // ---------------------------------------------------------------------------
 
+// SPEC.md §4 flags this union as "shape, not final". `discardCards` is the
+// one addition Phase 1 needed: after a 7, a player holding >7 cards must
+// discard half (rounded down) — a player decision the server has to receive
+// as an action, not something the engine can decide unilaterally.
 export type Action =
   | { type: "rollDice" }
   | { type: "buildRoad"; edge: EdgeId }
@@ -144,7 +169,29 @@ export type Action =
   | { type: "proposeTrade"; offer: TradeOffer }
   | { type: "respondTrade"; accept: boolean }
   | { type: "moveRobber"; hex: HexId; stealFrom?: number }
+  | { type: "discardCards"; discard: Partial<Record<Resource, number>> }
   | { type: "endTurn" };
+
+// playDevCard payloads, keyed by cardId — kept separate from the Action
+// union itself (which types payload as `unknown`, per SPEC.md §4) so
+// reducers have a concrete shape to validate against.
+
+export interface MonopolyPayload {
+  resource: Resource;
+}
+
+export interface YearOfPlentyPayload {
+  resources: [Resource, Resource];
+}
+
+export interface RoadBuildingPayload {
+  edges: EdgeId[]; // up to 2; fewer if the player can't place that many
+}
+
+export interface KnightPayload {
+  hex: HexId;
+  stealFrom?: number;
+}
 
 /** Every action carries this envelope at the server boundary (SPEC.md §4). */
 export interface ActionEnvelope {

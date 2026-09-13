@@ -16,8 +16,8 @@
 // (sorted) pair of the two hexes on either side of it.
 
 import { HEX_DIRECTIONS, cubeAdd, cubeNeighbor, hexKey, type CubeCoord } from "./coords.js";
-import { distance, hexCenter, hexCornerPoint } from "./pixel.js";
-import type { EdgeId, VertexId } from "@catan/shared";
+import { distance, hexCenter, hexCornerPoint, midpoint, type Point } from "./pixel.js";
+import type { EdgeId, HexId, VertexId } from "@catan/shared";
 
 const ORIGIN: CubeCoord = { x: 0, y: 0, z: 0 };
 const EPS = 1e-6;
@@ -105,6 +105,32 @@ export function edgeIdOfDirection(c: CubeCoord, d: number): EdgeId {
  */
 export function hexEdges(c: CubeCoord): EdgeId[] {
   return EDGE_DIRECTIONS.map((d) => edgeIdOfDirection(c, d));
+}
+
+function parseHexKey(id: HexId): CubeCoord {
+  const [x, y, z] = id.split(",").map(Number);
+  return { x: x!, y: y!, z: z! };
+}
+
+/**
+ * Pixel position of a canonical vertex id. Works for the parse-back
+ * direction of the same identity used by `vertexIdOf`: the id triple is
+ * exactly 3x the centroid of its (up to 3) surrounding hexes, so dividing
+ * by 3 and treating it as a (fractional) cube coordinate recovers the point.
+ */
+export function vertexPixel(id: VertexId, size = 1): Point {
+  const raw = id.slice(2); // strip "v:"
+  const [x, y, z] = raw.split(",").map(Number);
+  return hexCenter({ x: x! / 3, y: y! / 3, z: z! / 3 }, size);
+}
+
+/** Pixel midpoint of a canonical edge id — the point halfway between its two hexes. */
+export function edgeMidpoint(id: EdgeId, size = 1): Point {
+  const raw = id.slice(2); // strip "e:"
+  const [hexA, hexB] = raw.split("|");
+  const a = hexCenter(parseHexKey(hexA!), size);
+  const b = hexCenter(parseHexKey(hexB!), size);
+  return midpoint(a, b);
 }
 
 // Exposed for tests that want to cross-check the derivation itself.

@@ -1,0 +1,21 @@
+{
+  "name": "@catan/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "play": "vite-node src/play.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@catan/engine": "workspace:*",
+    "@catan/rulesets": "workspace:*",
+    "@catan/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "vite-node": "^2.1.4",
+    "vitest": "^2.1.4"
+  }
+}
