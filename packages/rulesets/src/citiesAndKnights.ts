@@ -3,6 +3,7 @@
 // and the engine branches on them. Slice 1: commodities and city
 // improvements (second placement is a city; 13 points to win). Slice 2:
 // the event die, the barbarian track and attack, and knights as pieces.
+// Slice 3: progress cards dealt by the city-gate faces.
 
 import type { CitiesAndKnightsRules, RuleSet } from "@catan/shared";
 import type { RngState } from "@catan/engine";
@@ -26,6 +27,25 @@ export const CITIES_AND_KNIGHTS_RULES: CitiesAndKnightsRules = {
   },
   knightsPerLevel: 2,
   fortressLevel: 3,
+  // Slice 3: only the cards the engine implements are in the decks (official
+  // counts for those). Deferred cards are listed in HANDOFF.md.
+  progressCards: [
+    { id: "resourceMonopoly", label: "Resource Monopoly", category: "trade", count: 4, timing: "mainTurn" },
+    { id: "tradeMonopoly", label: "Trade Monopoly", category: "trade", count: 2, timing: "mainTurn" },
+    { id: "merchantFleet", label: "Merchant Fleet", category: "trade", count: 2, timing: "mainTurn" },
+    { id: "bishop", label: "Bishop", category: "politics", count: 2, timing: "mainTurn" },
+    { id: "warlord", label: "Warlord", category: "politics", count: 2, timing: "mainTurn" },
+    { id: "spy", label: "Spy", category: "politics", count: 3, timing: "mainTurn" },
+    { id: "constitution", label: "Constitution", category: "politics", count: 1, timing: "immediate" },
+    { id: "irrigation", label: "Irrigation", category: "science", count: 2, timing: "mainTurn" },
+    { id: "mining", label: "Mining", category: "science", count: 2, timing: "mainTurn" },
+    { id: "roadBuilding", label: "Road Building", category: "science", count: 2, timing: "mainTurn" },
+    { id: "inventor", label: "Inventor", category: "science", count: 2, timing: "mainTurn" },
+    { id: "alchemist", label: "Alchemist", category: "science", count: 2, timing: "beforeRoll" },
+    { id: "smith", label: "Smith", category: "science", count: 2, timing: "mainTurn" },
+    { id: "printer", label: "Printer", category: "science", count: 1, timing: "immediate" },
+  ],
+  progressHandLimit: 4,
 };
 
 export function createCitiesAndKnightsRuleSet(

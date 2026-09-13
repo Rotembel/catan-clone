@@ -57,6 +57,23 @@ export const TEST_CK_RULES: CitiesAndKnightsRules = {
   knightCosts: { build: { sheep: 1, ore: 1 }, activate: { wheat: 1 }, promote: { sheep: 1, ore: 1 } },
   knightsPerLevel: 2,
   fortressLevel: 3,
+  progressCards: [
+    { id: "resourceMonopoly", label: "Resource Monopoly", category: "trade", count: 4, timing: "mainTurn" },
+    { id: "tradeMonopoly", label: "Trade Monopoly", category: "trade", count: 2, timing: "mainTurn" },
+    { id: "merchantFleet", label: "Merchant Fleet", category: "trade", count: 2, timing: "mainTurn" },
+    { id: "bishop", label: "Bishop", category: "politics", count: 2, timing: "mainTurn" },
+    { id: "warlord", label: "Warlord", category: "politics", count: 2, timing: "mainTurn" },
+    { id: "spy", label: "Spy", category: "politics", count: 3, timing: "mainTurn" },
+    { id: "constitution", label: "Constitution", category: "politics", count: 1, timing: "immediate" },
+    { id: "irrigation", label: "Irrigation", category: "science", count: 2, timing: "mainTurn" },
+    { id: "mining", label: "Mining", category: "science", count: 2, timing: "mainTurn" },
+    { id: "roadBuilding", label: "Road Building", category: "science", count: 2, timing: "mainTurn" },
+    { id: "inventor", label: "Inventor", category: "science", count: 2, timing: "mainTurn" },
+    { id: "alchemist", label: "Alchemist", category: "science", count: 2, timing: "beforeRoll" },
+    { id: "smith", label: "Smith", category: "science", count: 2, timing: "mainTurn" },
+    { id: "printer", label: "Printer", category: "science", count: 1, timing: "immediate" },
+  ],
+  progressHandLimit: 4,
 };
 
 export interface TestRuleSetOptions {
@@ -230,6 +247,15 @@ export function withImprovement(
     ...state,
     players: state.players.map((p) =>
       p.id === playerId ? { ...p, improvements: { ...p.improvements, [track]: level } } : p
+    ),
+  };
+}
+
+export function giveProgressCards(state: GameState, playerId: number, cardIds: string[]): GameState {
+  return {
+    ...state,
+    players: state.players.map((p) =>
+      p.id === playerId ? { ...p, progressCards: [...p.progressCards, ...cardIds] } : p
     ),
   };
 }

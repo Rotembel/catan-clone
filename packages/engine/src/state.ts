@@ -1,6 +1,7 @@
 import type { GameState, Player, Resource, RuleSet } from "@catan/shared";
 import { emptyCommodities, emptyImprovements, emptyResources } from "./resources.js";
 import { shuffle, type RngState } from "./rng.js";
+import { createProgressDecks, emptyProgressDecks } from "./progress/deck.js";
 
 export interface CreateGameOptions {
   playerNames: string[];
@@ -32,6 +33,8 @@ export function createPlayer(id: number, name: string): Player {
     commodities: emptyCommodities(),
     improvements: emptyImprovements(),
     defenderOfCatan: 0,
+    progressCards: [],
+    progressVictoryPoints: 0,
   };
 }
 
@@ -50,12 +53,15 @@ export function normalizeState(state: GameState): GameState {
     setupRound:
       state.setupRound ??
       (state.turn.phase.startsWith("setup") ? (state.turn.phase.endsWith("1") ? 0 : 1) : 2),
-    board: { ...state.board, knights: state.board.knights ?? {} },
+    board: { ...state.board, knights: state.board.knights ?? {}, tokenOverrides: state.board.tokenOverrides ?? {} },
+    progressDecks: state.progressDecks ?? emptyProgressDecks(),
     players: state.players.map((p) => ({
       ...p,
       commodities: { ...emptyCommodities(), ...(p.commodities ?? {}) },
       improvements: { ...emptyImprovements(), ...(p.improvements ?? {}) },
       defenderOfCatan: p.defenderOfCatan ?? 0,
+      progressCards: p.progressCards ?? [],
+      progressVictoryPoints: p.progressVictoryPoints ?? 0,
     })),
   };
 }
@@ -67,6 +73,9 @@ export function createInitialState(ruleSet: RuleSet, options: CreateGameOptions)
   }
 
   const { result: devDeck, state: rngAfterDeck } = shuffle(buildDevDeck(ruleSet), options.rngState);
+  // Progress decks draw from the RNG only when the expansion is on, so
+  // base-game and Home Large games are unchanged.
+  const { decks: progressDecks, state: rngAfterProgress } = createProgressDecks(ruleSet, rngAfterDeck);
 
   const desert = ruleSet.board.hexes.find((h) => h.resource === "desert");
   const robberHex = desert?.id ?? ruleSet.board.hexes[0]!.id;
@@ -88,12 +97,14 @@ export function createInitialState(ruleSet: RuleSet, options: CreateGameOptions)
       roads: {},
       robberHex,
       knights: {},
+      tokenOverrides: {},
     },
+    progressDecks,
     devDeck,
     bank,
     commodityBank,
     barbarianPosition: 0,
     setupRound: 0,
-    rngState: rngAfterDeck,
+    rngState: rngAfterProgress,
   };
 }

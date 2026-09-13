@@ -107,7 +107,9 @@ export function Board({ game, ruleSet, targets, onVertex, onEdge, onHex }: Board
   return (
     <svg className="board" viewBox={scene.viewBox} role="img" aria-label="game board">
       {/* hexes */}
-      {scene.hexes.map(({ hex, center, corners }) => {
+      {scene.hexes.map(({ hex: layoutHex, center, corners }) => {
+        // The Inventor may have moved this hex's number; the layout itself never changes.
+        const hex = { ...layoutHex, numberToken: game.board.tokenOverrides[layoutHex.id] ?? layoutHex.numberToken };
         const clickable = targets.hexes.has(hex.id);
         const isRobber = game.board.robberHex === hex.id;
         return (

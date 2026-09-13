@@ -1,7 +1,7 @@
 // Resource (and, in Cities & Knights, commodity) production on a dice roll,
 // and bank trade ratios.
 
-import type { Commodity, GameState, Resource, RuleSet } from "@catan/shared";
+import type { Commodity, GameState, HexTile, Resource, RuleSet } from "@catan/shared";
 import { hexVertices } from "../board/geometry.js";
 import { getGeometry } from "../geometryCache.js";
 import { COMMODITIES, RESOURCES } from "../resources.js";
@@ -59,6 +59,11 @@ function payOut<K extends string>(
   return { gains, supply: left };
 }
 
+/** The hex's number token as it stands now (the Inventor may have moved it). */
+export function effectiveNumberToken(state: GameState, hex: HexTile): number | null {
+  return state.board.tokenOverrides[hex.id] ?? hex.numberToken;
+}
+
 /**
  * Who produces what on `roll`. The robber's hex produces nothing. A
  * settlement yields 1 resource; a city yields 2 — or, with Cities & Knights
@@ -71,7 +76,7 @@ export function productionForRoll(state: GameState, ruleSet: RuleSet, roll: numb
   const commodityFor = ruleSet.citiesAndKnights?.commodityFor;
 
   for (const hex of ruleSet.board.hexes) {
-    if (hex.numberToken !== roll) continue;
+    if (effectiveNumberToken(state, hex) !== roll) continue;
     if (hex.id === state.board.robberHex) continue;
     if (hex.resource === "desert") continue;
     const cube = geometry.hexes.get(hex.id);
@@ -118,6 +123,8 @@ export function tradeRatiosFor(
   playerId: number
 ): Record<Resource, number> {
   const ratios: Record<Resource, number> = { wood: 4, brick: 4, sheep: 4, wheat: 4, ore: 4 };
+  const fleet = state.players.find((p) => p.id === playerId)?.merchantFleet;
+  if (fleet && fleet in ratios) ratios[fleet as Resource] = 2;
 
   for (const port of ruleSet.board.ports) {
     const owns = port.vertexIds.some((v) => state.board.buildings[v]?.playerId === playerId);
@@ -137,12 +144,18 @@ export function tradeRatiosFor(
  * gives 3:1, and the trading house (trade improvement at
  * `commodityPortLevel`) gives 2:1. Resource-specific ports don't apply.
  */
-export function commodityTradeRatioFor(state: GameState, ruleSet: RuleSet, playerId: number): number {
+export function commodityTradeRatioFor(
+  state: GameState,
+  ruleSet: RuleSet,
+  playerId: number,
+  commodity?: Commodity
+): number {
   const ck = ruleSet.citiesAndKnights;
   const player = state.players.find((p) => p.id === playerId);
   if (!ck || !player) return 4;
 
   let ratio = 4;
+  if (commodity && player.merchantFleet === commodity) ratio = 2;
   for (const port of ruleSet.board.ports) {
     if (port.resource !== null) continue;
     if (port.vertexIds.some((v) => state.board.buildings[v]?.playerId === playerId)) {

@@ -68,7 +68,7 @@ function bankTrade(state: GameState, ruleSet: RuleSet, playerId: number, offer: 
   const [giveCard, giveAmount] = giveEntries[0]!;
 
   const ratio = isCommodity(giveCard)
-    ? commodityTradeRatioFor(state, ruleSet, playerId)
+    ? commodityTradeRatioFor(state, ruleSet, playerId, giveCard)
     : tradeRatiosFor(state, ruleSet, playerId)[giveCard];
   if (giveAmount % ratio !== 0) {
     illegal(`a bank trade for ${giveCard} must be in multiples of ${ratio}`);

@@ -13,6 +13,7 @@ import { pieceCounts, pieceLimitsOf } from "../reducers/helpers.js";
 import { canBuildImprovement } from "../reducers/improve.js";
 import { cityVertices } from "../reducers/barbarians.js";
 import { knightCounts, knightReachableVertices, legalKnightVertices } from "../reducers/knights.js";
+import { playableProgressCards } from "../reducers/progress.js";
 import { stealTargetsAt } from "../reducers/robber.js";
 import { CARDS, COMMODITIES, IMPROVEMENT_TRACKS, RESOURCES, canAfford, isCommodity } from "../resources.js";
 import {
@@ -125,6 +126,9 @@ export function legalActions(state: GameState, ruleSet: RuleSet, playerId: numbe
       if (!isCurrent) break;
       actions.push({ type: "rollDice" });
       actions.push(...knightActions(state, ruleSet, playerId));
+      for (const { cardId, payloads } of playableProgressCards(state, ruleSet, playerId)) {
+        for (const payload of payloads) actions.push({ type: "playProgressCard", cardId, payload });
+      }
       break;
     }
 
@@ -143,6 +147,12 @@ export function legalActions(state: GameState, ruleSet: RuleSet, playerId: numbe
     case "barbarianDowngrade": {
       if (!(state.pendingDowngrades ?? []).includes(playerId)) break;
       for (const vertex of cityVertices(state, playerId)) actions.push({ type: "downgradeCity", vertex });
+      break;
+    }
+
+    case "progressDiscard": {
+      if (!(state.pendingProgressDiscards ?? []).includes(playerId)) break;
+      for (const cardId of [...new Set(player.progressCards)]) actions.push({ type: "discardProgressCard", cardId });
       break;
     }
 
@@ -213,6 +223,10 @@ export function legalActions(state: GameState, ruleSet: RuleSet, playerId: numbe
 
       actions.push(...knightActions(state, ruleSet, playerId));
 
+      for (const { cardId, payloads } of playableProgressCards(state, ruleSet, playerId)) {
+        for (const payload of payloads) actions.push({ type: "playProgressCard", cardId, payload });
+      }
+
       if (!player.hasPlayedDevCardThisTurn) {
         const playable = (cardId: string) =>
           player.devCards.filter((id) => id === cardId).length -
@@ -259,12 +273,11 @@ export function legalActions(state: GameState, ruleSet: RuleSet, playerId: numbe
 
       // Bank/port trades: one ratio's worth of any card for any other.
       const ratios = tradeRatiosFor(state, ruleSet, playerId);
-      const commodityRatio = commodityTradeRatioFor(state, ruleSet, playerId);
       const tradable: Card[] = ruleSet.citiesAndKnights ? [...CARDS] : [...RESOURCES];
       const held = (c: Card) => (isCommodity(c) ? player.commodities[c] : player.resources[c]);
       const inBank = (c: Card) => (isCommodity(c) ? state.commodityBank[c] : state.bank[c]);
       for (const give of tradable) {
-        const ratio = isCommodity(give) ? commodityRatio : ratios[give];
+        const ratio = isCommodity(give) ? commodityTradeRatioFor(state, ruleSet, playerId, give) : ratios[give];
         if (held(give) < ratio) continue;
         for (const receive of tradable) {
           if (receive === give || inBank(receive) < 1) continue;

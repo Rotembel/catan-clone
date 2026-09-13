@@ -16,6 +16,7 @@ export function endTurn(state: GameState, ruleSet: RuleSet, playerId: number): G
       ...p,
       devCardsBoughtThisTurn: [],
       hasPlayedDevCardThisTurn: false,
+      merchantFleet: undefined,
     })),
     turn: { current: nextIndex, phase: "rollDice" },
   };

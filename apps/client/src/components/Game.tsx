@@ -74,9 +74,19 @@ type Mode =
   | { kind: "idle" }
   | { kind: "knight" }
   | { kind: "roadBuilding"; edges: EdgeId[] }
-  | { kind: "victim"; hex: HexId; victims: number[]; viaKnight: boolean };
+  | { kind: "victim"; hex: HexId; victims: number[]; viaKnight: boolean }
+  /** Progress cards that target the board: Bishop (one hex), Inventor (two hexes). */
+  | { kind: "bishop"; hexes: Set<HexId> }
+  | { kind: "inventor"; first?: HexId };
 
-type Dialog = "bank" | "trade" | "monopoly" | "yearOfPlenty" | null;
+type Dialog =
+  | "bank"
+  | "trade"
+  | "monopoly"
+  | "yearOfPlenty"
+  /** A progress card whose payload is picked from a list. */
+  | { progress: string }
+  | null;
 
 interface Props {
   net: NetState;
@@ -122,6 +132,32 @@ export function Game({ net, game, ruleSet, me }: Props) {
 
   const canPlay = (cardId: string) =>
     legal.some((a) => a.type === "playDevCard" && a.cardId === cardId);
+  const progressPayloads = (cardId: string): unknown[] =>
+    legal.flatMap((a) => (a.type === "playProgressCard" && a.cardId === cardId ? [a.payload] : []));
+  const inventorHexes = useMemo(() => {
+    const pairs = progressPayloads("inventor") as { hexA: HexId; hexB: HexId }[];
+    return pairs;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [legal]);
+
+  /** Start playing a progress card: auto-send when there is no choice, else open the right picker. */
+  const startProgressCard = (cardId: string) => {
+    const payloads = progressPayloads(cardId);
+    if (payloads.length === 0) return;
+    if (cardId === "bishop") {
+      setMode({ kind: "bishop", hexes: new Set((payloads as { hex: HexId }[]).map((p) => p.hex)) });
+      return;
+    }
+    if (cardId === "inventor") {
+      setMode({ kind: "inventor" });
+      return;
+    }
+    if (payloads.length === 1) {
+      sendAction({ type: "playProgressCard", cardId, payload: payloads[0] });
+      return;
+    }
+    setDialog({ progress: cardId });
+  };
 
   // Road Building: after the first pick, the second road may hang off it, so
   // ask the engine what's legal from that hypothetical state.
@@ -143,6 +179,19 @@ export function Game({ net, game, ruleSet, me }: Props) {
     switch (mode.kind) {
       case "knight":
         return { ...none, hexes: new Set(knightMoves.keys()) };
+      case "bishop":
+        return { ...none, hexes: mode.hexes };
+      case "inventor": {
+        const hexes = new Set<HexId>();
+        for (const p of inventorHexes) {
+          if (!mode.first) {
+            hexes.add(p.hexA);
+            hexes.add(p.hexB);
+          } else if (p.hexA === mode.first) hexes.add(p.hexB);
+          else if (p.hexB === mode.first) hexes.add(p.hexA);
+        }
+        return { ...none, hexes };
+      }
       case "roadBuilding":
         return { ...none, edges: roadBuildingEdges, selectedEdges: new Set(mode.edges) };
       case "victim":
@@ -155,7 +204,7 @@ export function Game({ net, game, ruleSet, me }: Props) {
           selectedEdges: new Set<EdgeId>(),
         };
     }
-  }, [mode, over, knightMoves, roadBuildingEdges, settlementVertices, cityVertices, roadEdges, robberMoves, downgradeVertices]);
+  }, [mode, over, knightMoves, roadBuildingEdges, settlementVertices, cityVertices, roadEdges, robberMoves, downgradeVertices, inventorHexes]);
 
   const onVertex = (v: VertexId) => {
     if (downgradeVertices.has(v)) sendAction({ type: "downgradeCity", vertex: v });
@@ -190,6 +239,19 @@ export function Game({ net, game, ruleSet, me }: Props) {
   };
 
   const onHex = (h: HexId) => {
+    if (mode.kind === "bishop") {
+      if (mode.hexes.has(h)) sendAction({ type: "playProgressCard", cardId: "bishop", payload: { hex: h } });
+      return;
+    }
+    if (mode.kind === "inventor") {
+      if (!mode.first) {
+        setMode({ kind: "inventor", first: h });
+        return;
+      }
+      const pair = inventorHexes.find((p) => (p.hexA === mode.first && p.hexB === h) || (p.hexB === mode.first && p.hexA === h));
+      if (pair) sendAction({ type: "playProgressCard", cardId: "inventor", payload: pair });
+      return;
+    }
     if (mode.kind === "knight") {
       const victims = knightMoves.get(h);
       if (victims) moveRobberTo(h, victims, true);
@@ -200,6 +262,7 @@ export function Game({ net, game, ruleSet, me }: Props) {
   };
 
   const owesDiscard = (game.pendingDiscards ?? []).includes(me);
+  const owesProgressDiscard = (game.pendingProgressDiscards ?? []).includes(me);
   const tradeForMe = game.pendingTrade?.toPlayerId === me ? game.pendingTrade : undefined;
 
   return (
@@ -285,6 +348,27 @@ export function Game({ net, game, ruleSet, me }: Props) {
           </section>
 
           {ruleSet.citiesAndKnights && (
+            <section className="progress" data-testid="progress-cards">
+              <h3>Progress cards <span className="muted">({player.progressCards.length}/{ruleSet.citiesAndKnights.progressHandLimit}{player.progressVictoryPoints ? ` · +${player.progressVictoryPoints} VP` : ""})</span></h3>
+              {player.progressCards.length === 0 ? (
+                <p className="muted">None yet — city improvements earn them on the event die.</p>
+              ) : (
+                <div className="devcards">
+                  {Object.entries(countBy(player.progressCards)).map(([id, n]) => {
+                    const def = ruleSet.citiesAndKnights!.progressCards.find((d) => d.id === id);
+                    const playable = mode.kind === "idle" && progressPayloads(id).length > 0;
+                    return (
+                      <button key={id} className="devcard" disabled={!playable} title={def ? `${def.category} · ${def.timing === "beforeRoll" ? "play before rolling" : "play on your turn"}` : id} onClick={() => startProgressCard(id)}>
+                        {def?.label ?? id} ×{n}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          )}
+
+          {ruleSet.citiesAndKnights && (
             <section className="improvements" data-testid="improvements">
               <h3>City improvements</h3>
               {IMPROVEMENT_TRACKS.map((track) => {
@@ -315,6 +399,8 @@ export function Game({ net, game, ruleSet, me }: Props) {
                     {mode.kind === "knight" && "Pick a hex for the robber."}
                     {mode.kind === "roadBuilding" && `Pick ${2 - mode.edges.length} more road${mode.edges.length === 1 ? "" : "s"}.`}
                     {mode.kind === "victim" && "Steal from:"}
+                    {mode.kind === "bishop" && "Bishop: pick the robber's new hex."}
+                    {mode.kind === "inventor" && (mode.first ? "Inventor: pick the second hex to swap with." : "Inventor: pick the first hex.")}
                   </span>
                   {mode.kind === "victim" &&
                     mode.victims.map((v) => (
@@ -368,6 +454,25 @@ export function Game({ net, game, ruleSet, me }: Props) {
       </div>
 
       {owesDiscard && <DiscardDialog game={game} ruleSet={ruleSet} me={me} />}
+      {owesProgressDiscard && (
+        <Modal title={`Too many progress cards — discard down to ${ruleSet.citiesAndKnights!.progressHandLimit}`}>
+          <div className="row wrap">
+            {Object.entries(countBy(player.progressCards)).map(([id, n]) => (
+              <button key={id} className="chip" onClick={() => sendAction({ type: "discardProgressCard", cardId: id })}>
+                {ruleSet.citiesAndKnights!.progressCards.find((d) => d.id === id)?.label ?? id} ×{n}
+              </button>
+            ))}
+          </div>
+        </Modal>
+      )}
+      {typeof dialog === "object" && dialog !== null && "progress" in dialog && (
+        <PickPayload
+          title={ruleSet.citiesAndKnights!.progressCards.find((d) => d.id === dialog.progress)?.label ?? dialog.progress}
+          options={progressPayloads(dialog.progress).map((payload) => ({ payload, label: describePayload(dialog.progress, payload, game, ruleSet) }))}
+          onPick={(payload) => sendAction({ type: "playProgressCard", cardId: dialog.progress, payload })}
+          onClose={() => setDialog(null)}
+        />
+      )}
       {tradeForMe && (
         <TradeResponse game={game} ruleSet={ruleSet} offer={tradeForMe} me={me} />
       )}
@@ -432,6 +537,10 @@ function statusText(game: GameState, ruleSet: RuleSet, me: number, mode: Mode): 
   const mine = current.id === me;
   const who = mine ? "You" : current.name;
 
+  if ((game.pendingProgressDiscards ?? []).length > 0) {
+    const names = game.pendingProgressDiscards!.map((id) => (id === me ? "you" : game.players.find((p) => p.id === id)?.name)).join(", ");
+    return game.pendingProgressDiscards!.includes(me) ? "Too many progress cards — discard one." : `Waiting for ${names} to discard a progress card.`;
+  }
   if ((game.pendingDowngrades ?? []).length > 0) {
     const names = game.pendingDowngrades!.map((id) => (id === me ? "you" : game.players.find((p) => p.id === id)?.name)).join(", ");
     return game.pendingDowngrades!.includes(me)
@@ -468,6 +577,8 @@ function statusText(game: GameState, ruleSet: RuleSet, me: number, mode: Mode): 
       return "Discarding…";
     case "barbarianDowngrade":
       return "The barbarians won…";
+    case "progressDiscard":
+      return "Waiting for a progress-card discard…";
     case "gameOver":
       return "Game over.";
   }
@@ -748,6 +859,48 @@ function PlayerTradeDialog({ game, ruleSet, me, onClose }: { game: GameState; ru
         }}>
           Offer
         </button>
+      </div>
+    </Modal>
+  );
+}
+
+/** Human-readable label for a progress-card payload, for the picker. */
+function describePayload(cardId: string, payload: unknown, game: GameState, ruleSet: RuleSet): string {
+  const p = (payload ?? {}) as Record<string, unknown>;
+  switch (cardId) {
+    case "resourceMonopoly":
+      return `${CARD_ICON[p.resource as Card]} ${String(p.resource)}`;
+    case "tradeMonopoly":
+      return `${CARD_ICON[p.commodity as Card]} ${String(p.commodity)}`;
+    case "merchantFleet":
+      return `${CARD_ICON[p.card as Card]} ${String(p.card)} at 2:1`;
+    case "spy": {
+      const who = game.players.find((x) => x.id === p.playerId)?.name ?? `P${String(p.playerId)}`;
+      const card = ruleSet.citiesAndKnights?.progressCards.find((d) => d.id === p.cardId)?.label ?? String(p.cardId);
+      return `${who}: ${card}`;
+    }
+    case "alchemist": {
+      const [a, b] = p.dice as [number, number];
+      return `${a} + ${b}`;
+    }
+    case "smith": {
+      const vs = p.vertices as string[];
+      return vs.length === 2 ? "Promote both knights" : `Promote knight ${vs[0]?.slice(2)}`;
+    }
+    default:
+      return JSON.stringify(payload);
+  }
+}
+
+function PickPayload({ title, options, onPick, onClose }: { title: string; options: { payload: unknown; label: string }[]; onPick: (payload: unknown) => void; onClose: () => void }) {
+  return (
+    <Modal title={title} onClose={onClose}>
+      <div className="row wrap">
+        {options.map((o, i) => (
+          <button key={i} className="chip" onClick={() => { onPick(o.payload); onClose(); }}>
+            {o.label}
+          </button>
+        ))}
       </div>
     </Modal>
   );

@@ -14,6 +14,7 @@ import {
 import { nextInt, rollTwoDice } from "../rng.js";
 import { productionForRoll } from "../selectors/production.js";
 import { advanceBarbarians } from "./barbarians.js";
+import { distributeProgressCards } from "../progress/draw.js";
 import { illegal, refresh, requireCurrentPlayer, requirePhase } from "./helpers.js";
 
 /** Hand size (resources + commodities) above which a 7 forces a discard. */
@@ -23,11 +24,19 @@ export function rollDice(state: GameState, ruleSet: RuleSet, playerId: number): 
   requirePhase(state, "rollDice");
   requireCurrentPlayer(state, playerId);
 
-  const { dice, state: rngState } = rollTwoDice(state.rngState);
-  let next: GameState = { ...state, dice, rngState, eventDie: undefined };
+  // Alchemist: the production dice were chosen; nothing is drawn for them.
+  let next: GameState;
+  if (state.alchemistDice) {
+    next = { ...state, dice: state.alchemistDice, alchemistDice: undefined, eventDie: undefined };
+  } else {
+    const { dice, state: rngState } = rollTwoDice(state.rngState);
+    next = { ...state, dice, rngState, eventDie: undefined };
+  }
 
-  // Cities & Knights: the event die rolls with the production dice, and a
-  // barbarian face is resolved *before* production. The base game draws
+  // Cities & Knights: the event die rolls with the production dice. A
+  // barbarian face is resolved *before* production; a city-gate face deals
+  // progress cards *before* production too, so both can pause the roll on a
+  // player decision and resume it with resolveRoll. The base game draws
   // nothing extra from the RNG, so its rolls are unchanged.
   const ck = ruleSet.citiesAndKnights;
   if (ck) {
@@ -35,7 +44,8 @@ export function rollDice(state: GameState, ruleSet: RuleSet, playerId: number): 
     const face = ck.eventDie[value]!;
     next = { ...next, rngState: afterEvent, eventDie: face };
     if (face === "barbarian") next = advanceBarbarians(next, ruleSet);
-    if (next.turn.phase === "barbarianDowngrade") return refresh(next, ruleSet);
+    else next = distributeProgressCards(next, ruleSet, face);
+    if (next.turn.phase === "barbarianDowngrade" || next.turn.phase === "progressDiscard") return refresh(next, ruleSet);
   }
 
   return resolveRoll(next, ruleSet);

@@ -21,6 +21,27 @@ export type EventDieFace = "barbarian" | "trade" | "politics" | "science";
 /** Knight strength: 1 basic, 2 strong, 3 mighty. */
 export type KnightLevel = 1 | 2 | 3;
 
+/**
+ * A Cities & Knights progress card, as data. Effects live in the engine's
+ * card registry keyed by `id`; the deck only knows category and count.
+ * `timing`: "mainTurn" = played on your turn after rolling; "beforeRoll" =
+ * only in the rollDice phase; "immediate" = resolved the moment it is drawn
+ * (the victory-point cards) and never held.
+ */
+export interface ProgressCardDef {
+  id: string;
+  label: string;
+  category: ImprovementTrack;
+  count: number;
+  timing: "mainTurn" | "beforeRoll" | "immediate";
+}
+
+/** A category's draw pile and discard pile, top of the draw pile first. */
+export interface ProgressDeck {
+  draw: string[];
+  discard: string[];
+}
+
 /** Opaque canonical id for a board hex — see engine/board for how these are derived. */
 export type HexId = string;
 /** Opaque canonical id for a settlement/city spot (a hex-grid vertex). */
@@ -106,6 +127,10 @@ export interface CitiesAndKnightsRules {
   knightsPerLevel: number;
   /** Politics level required to promote a knight to mighty (the Fortress). */
   fortressLevel: number;
+  /** Progress cards (slice 3). */
+  progressCards: ProgressCardDef[];
+  /** Most progress cards a player may hold; drawing past it forces a discard. */
+  progressHandLimit: number;
 }
 
 /** One opening-placement round: a piece, optionally followed by a road. */
@@ -176,6 +201,8 @@ export type TurnPhase =
   | "moveRobberAfterSeven"
   /** Barbarians won and players in `pendingDowngrades` must choose which city to lose. */
   | "barbarianDowngrade"
+  /** Someone drew past the progress-card hand limit; `pendingProgressDiscards` must choose. */
+  | "progressDiscard"
   | "gameOver";
 
 export interface Player {
@@ -200,6 +227,12 @@ export interface Player {
   improvements: Record<ImprovementTrack, number>;
   /** Defender of Catan awards held (1 VP each); always 0 in a base game. */
   defenderOfCatan: number;
+  /** Cities & Knights progress cards in hand (ids); always empty in a base game. */
+  progressCards: string[];
+  /** Victory-point progress cards resolved (1 VP each, public, permanent). */
+  progressVictoryPoints: number;
+  /** Merchant Fleet: this card trades 2:1 with the bank for the rest of the turn. */
+  merchantFleet?: Card;
 }
 
 export interface Knight {
@@ -222,6 +255,8 @@ export interface BoardState {
   robberHex: HexId;
   /** Cities & Knights knights, by vertex; always empty in a base game. */
   knights: Partial<Record<VertexId, Knight>>;
+  /** Number tokens moved by the Inventor; the layout in the RuleSet stays untouched. */
+  tokenOverrides: Partial<Record<HexId, number>>;
 }
 
 export interface TradeOffer {
@@ -256,6 +291,12 @@ export interface GameState {
   eventDie?: EventDieFace;
   /** Players who lost the barbarian attack and hold several cities: they choose which to lose. */
   pendingDowngrades?: number[];
+  /** Cities & Knights progress decks; empty piles in a base game. */
+  progressDecks: Record<ImprovementTrack, ProgressDeck>;
+  /** Players over the progress hand limit who must discard before play resumes. */
+  pendingProgressDiscards?: number[];
+  /** Alchemist: the production dice chosen for the coming roll. */
+  alchemistDice?: [number, number];
   /**
    * Current holders of the two bonus-VP awards. These are *state*, not
    * derived values: the official tie rule ("you only take it by strictly
@@ -301,7 +342,38 @@ export type Action =
   | { type: "moveKnight"; from: VertexId; to: VertexId }
   /** Cities & Knights: after a lost barbarian attack, which of your cities becomes a settlement. */
   | { type: "downgradeCity"; vertex: VertexId }
+  /** Cities & Knights progress cards (slice 3). Payload shapes: see the *Payload types. */
+  | { type: "playProgressCard"; cardId: string; payload?: unknown }
+  | { type: "discardProgressCard"; cardId: string }
   | { type: "endTurn" };
+
+// playProgressCard payloads, keyed by card id.
+export interface ResourceMonopolyPayload {
+  resource: Resource;
+}
+export interface TradeMonopolyPayload {
+  commodity: Commodity;
+}
+export interface MerchantFleetPayload {
+  card: Card;
+}
+export interface BishopPayload {
+  hex: HexId;
+}
+export interface SpyPayload {
+  playerId: number;
+  cardId: string;
+}
+export interface InventorPayload {
+  hexA: HexId;
+  hexB: HexId;
+}
+export interface AlchemistPayload {
+  dice: [number, number];
+}
+export interface SmithPayload {
+  vertices: VertexId[]; // 1 or 2 knights to promote
+}
 
 // playDevCard payloads, keyed by cardId — kept separate from the Action
 // union itself (which types payload as `unknown`, per SPEC.md §4) so

@@ -5,7 +5,8 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { boot, type ColyseusTestServer } from "@colyseus/testing";
 import type { Room as ClientRoom } from "colyseus.js";
-import { legalActions, pieceCounts } from "@catan/engine";
+import { createInitialState, legalActions, pieceCounts } from "@catan/engine";
+import { createRuleSet } from "@catan/rulesets";
 import { nextActor } from "@catan/bot";
 import {
   CLOSE_SUPERSEDED,
@@ -589,6 +590,60 @@ describe("CatanRoom", () => {
       expect(snap.seats.map((s) => s.name)).toEqual(["Whoever", "Grace"]);
       expect(snap.seats[1]?.playerId).toBe(1);
       void guest;
+    });
+  });
+
+  describe("Cities & Knights slice 3 over the wire", () => {
+    it("a room saved mid progress-card discard rehydrates, the pending player reclaims and resolves it, play resumes", async () => {
+      // Build the record the way a server would have saved it: seats with
+      // tokens, the C&K rule set, and a game paused on a progress discard.
+      const { ruleSet, state: rng } = createRuleSet("cities-and-knights", { seed: "mid-decision" });
+      let game = createInitialState(ruleSet, { playerNames: ["Ada", "Grace"], rngState: rng });
+      game = {
+        ...game,
+        dice: [3, 3],
+        turn: { current: 0, phase: "progressDiscard" },
+        pendingProgressDiscards: [1],
+        players: game.players.map((p) =>
+          p.id === 1 ? { ...p, progressCards: ["bishop", "warlord", "spy", "mining", "inventor"] } : p
+        ),
+      };
+      await store.save({
+        code: "MIDP",
+        seats: [
+          { playerId: 0, name: "Ada", connected: false, isHost: true, kind: "human", token: "tok-ada" },
+          { playerId: 1, name: "Grace", connected: false, isHost: false, kind: "human", token: "tok-grace" },
+        ],
+        ruleSet,
+        game,
+        build: TEST_BUILD,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+
+      const grace = await connect("MIDP", "Grace", "tok-grace");
+      await waitFor(() => grace.games[0] && grace.ruleSet ? true : undefined);
+      expect(grace.seat.playerId).toBe(1);
+      expect(grace.games[0]!.turn.phase).toBe("progressDiscard");
+      expect(grace.games[0]!.players[1]!.progressCards).toHaveLength(5);
+      expect(grace.ruleSet!.citiesAndKnights?.progressCards.length).toBeGreaterThan(0);
+
+      const choices = legalActions(grace.games[0]!, grace.ruleSet!, 1).filter((a) => a.type === "discardProgressCard");
+      expect(choices).toHaveLength(5);
+      // Ada (not pending) cannot resolve it.
+      const ada = await connect("MIDP", "Ada", "tok-ada");
+      await waitFor(() => ada.games[0]);
+      ada.room.send(MSG.action, { type: "discardProgressCard", cardId: "bishop" });
+      const err = await waitFor(() => ada.errors[0]);
+      expect(err.message).toMatch(/does not owe/);
+
+      grace.room.send(MSG.action, choices[0]!);
+      const resumed = await waitFor(() => (grace.games.length >= 2 ? grace.games.at(-1) : undefined));
+      expect(resumed.players[1]!.progressCards).toHaveLength(4);
+      expect(resumed.pendingProgressDiscards).toBeUndefined();
+      expect(resumed.turn.phase).toBe("mainTurn"); // the stashed 6 resolved
+      const saved = await store.load("MIDP");
+      expect(saved?.game).toEqual(resumed);
     });
   });
 });

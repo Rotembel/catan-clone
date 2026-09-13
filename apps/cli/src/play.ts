@@ -54,6 +54,10 @@ function describe(envelope: ActionEnvelope, state: GameState): string {
       return `${name} moves a knight`;
     case "downgradeCity":
       return `${name} loses a city to the barbarians`;
+    case "playProgressCard":
+      return `${name} plays ${action.cardId}`;
+    case "discardProgressCard":
+      return `${name} discards ${action.cardId}`;
     case "endTurn":
       return `${name} ends their turn`;
   }

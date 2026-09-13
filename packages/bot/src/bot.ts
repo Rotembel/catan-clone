@@ -33,8 +33,9 @@ function vertexValue(state: GameState, ruleSet: RuleSet, vertex: VertexId): numb
   const resources = new Set<string>();
   for (const hexId of hexIds) {
     const hex = ruleSet.board.hexes.find((h) => h.id === hexId);
-    if (!hex || hex.numberToken === null || hex.resource === "desert") continue;
-    pips += PIPS[hex.numberToken] ?? 0;
+    const token = state.board.tokenOverrides[hex?.id ?? ""] ?? hex?.numberToken ?? null;
+    if (!hex || token === null || hex.resource === "desert") continue;
+    pips += PIPS[token] ?? 0;
     resources.add(hex.resource);
   }
   const portBonus = ruleSet.board.ports.some((p) => p.vertexIds.includes(vertex)) ? 1 : 0;
@@ -136,6 +137,10 @@ export function chooseAction(
     return { action: bestBy(downgrades, (a) => -vertexValue(state, ruleSet, a.vertex)), rng };
   }
 
+  // Cities & Knights: over the progress hand limit — drop the first card.
+  const progressDiscards = ofType(options, "discardProgressCard");
+  if (progressDiscards.length > 0) return { action: progressDiscards[0], rng };
+
   const responses = ofType(options, "respondTrade");
   if (responses.length > 0) {
     return { action: responses.find((r) => !r.accept) ?? responses[0], rng };
@@ -188,6 +193,26 @@ export function chooseAction(
   // Cities & Knights: improvements are the only use for commodities.
   const improvements = ofType(options, "buildImprovement");
   if (improvements.length > 0) return { action: improvements[0], rng };
+
+  // Cities & Knights progress cards: only the ones with a safe, obvious
+  // payoff. Everything else stays in hand (see HANDOFF.md).
+  const progress = ofType(options, "playProgressCard");
+  const safeCard = (id: string) => progress.filter((a) => a.cardId === id);
+  const harvest = [...safeCard("irrigation"), ...safeCard("mining")];
+  if (harvest.length > 0) return { action: harvest[0], rng };
+  const warlords = safeCard("warlord");
+  if (warlords.length > 0) return { action: warlords[0], rng };
+  const monopolies = safeCard("resourceMonopoly");
+  if (monopolies.length > 0) {
+    const best = bestBy(monopolies, (a) => {
+      const r = (a.payload as { resource: Resource }).resource;
+      return state.players.filter((p) => p.id !== playerId).reduce((s, p) => s + Math.min(2, p.resources[r]), 0);
+    })!;
+    const haul = state.players.filter((p) => p.id !== playerId).reduce((s, p) => s + Math.min(2, p.resources[(best.payload as { resource: Resource }).resource]), 0);
+    if (haul >= 2) return { action: best, rng };
+  }
+  const freeRoads = safeCard("roadBuilding");
+  if (freeRoads.length > 0) return { action: freeRoads[0], rng };
 
   // Cities & Knights, minimal defence: keep one knight, and keep it active.
   // (No promotion or movement strategy yet — see HANDOFF.md.)

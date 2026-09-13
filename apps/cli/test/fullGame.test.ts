@@ -128,6 +128,8 @@ describe("a full base game", () => {
     let improvementsBuilt = 0;
     let knightsBuilt = 0;
     let attacks = 0;
+    let progressPlayed = 0;
+    let progressDrawn = 0;
     let commoditiesSeen = false;
     let checkedSetupCities = false;
     let lastShip = 0;
@@ -139,6 +141,15 @@ describe("a full base game", () => {
         assertInvariants(state, ruleSet, startingResources, startingCommodities);
         if (envelope.action.type === "buildImprovement") improvementsBuilt++;
         if (envelope.action.type === "buildKnight") knightsBuilt++;
+        if (envelope.action.type === "playProgressCard") progressPlayed++;
+        // Every progress card printed is in a draw pile, a discard pile, or a hand.
+        const printed = ruleSet.citiesAndKnights!.progressCards.reduce((n, d) => n + d.count, 0);
+        const inDecks = (["trade", "politics", "science"] as const).reduce(
+          (n, t) => n + state.progressDecks[t].draw.length + state.progressDecks[t].discard.length, 0
+        );
+        const inHands = state.players.reduce((n, p) => n + p.progressCards.length, 0);
+        expect(inDecks + inHands).toBe(printed);
+        if (inHands > 0 || (["trade", "politics", "science"] as const).some((t) => state.progressDecks[t].discard.length > 0)) progressDrawn++;
         if (state.players.some((p) => totalCommodities(p.commodities) > 0)) commoditiesSeen = true;
         // Everyone leaves setup with a city (the second placement).
         if (!checkedSetupCities && !state.turn.phase.startsWith("setup")) {
@@ -170,6 +181,9 @@ describe("a full base game", () => {
     expect(improvementsBuilt).toBeGreaterThan(0);
     expect(knightsBuilt).toBeGreaterThan(0);
     expect(attacks).toBeGreaterThan(0);
+    // Progress cards were dealt and the bots played some without ever deadlocking.
+    expect(progressDrawn).toBeGreaterThan(0);
+    expect(progressPlayed).toBeGreaterThan(0);
   });
 
   it.each(SEEDS)("Home Large — 5 Seats: 5 players finish at 13 on the generated map (seed %s)", (seed) => {
