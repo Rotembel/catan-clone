@@ -4,9 +4,10 @@ Worker note for whoever picks this up next (human or agent). Read `SPEC.md`
 for the plan and `CLAUDE.md` for conventions; this file is *status*: what
 exists, how it's verified, what's decided, what's next.
 
-Repo: https://github.com/Rotembel/catan-clone (private) · local:
-`~/Desktop/catan-starter-docs` · `main` is green and pushed as of commit
-`9bd4bad`.
+Repo: https://github.com/Rotembel/catan-clone (created private; the GitHub
+API reported it **public** on 2026-09-13 — not changed by the agent) · local:
+`~/Desktop/catan-starter-docs` · `main` is green and pushed as of `d8ec23a`
+(C&K slice 1) plus the planning-docs commit after it.
 
 ## Phases
 
@@ -41,6 +42,37 @@ cli 12, server 15). `pnpm typecheck` clean in all 6 packages.
    science 3)
 4. metropolises (level 4/5), city walls, merchant
 5. client UI for all of the above (slice 1's UI is already in)
+
+## Future workstreams — planning documents (read before starting either)
+
+Two owner-prepared design documents live in `docs/planning/`. They are
+**design / future-phase** material: build from them when their phase comes,
+don't implement them inside a Cities & Knights slice, and don't couple them
+to each other.
+
+- `docs/planning/MAP_GENERATOR_DESIGN.md` — **Procedural Map Generator**:
+  deterministic seeded generation (`BoardShapeGenerator` →
+  `BoardContentGenerator` → `BoardBalanceEvaluator`), 37-hex then 61-hex
+  presets, configurable `SetupRules` (e.g. 3 settlements; later 2
+  settlements + 1 city for C&K), 5+ seats; first target 5 seats = 3 humans +
+  2 bots. Must emit a normal `BoardLayout` on the existing canonical geometry,
+  stay server-authoritative, and be persisted (it already is, as part of the
+  `RuleSet` in the room record), never regenerated on reconnect/restart.
+- `docs/planning/HOME_LAN_VERSION_WRAP.md` — **Stable Home LAN build**:
+  a tagged known-good build, one-command launcher printing the LAN URL,
+  dedicated `CATAN_DATA_DIR`, explicit human/bot lobby seats with a
+  server-owned `BotController` over the existing `legalActions` bot (never a
+  fake browser client), reconnect/restart drills, automated + real multi-device
+  Wi-Fi smoke test, release tag independent of `main`.
+- `docs/planning/PLANNING_HANDOFF.md` — the owner's ordering: land docs →
+  finish/green the active C&K slice → mapgen as its own phase → home-LAN
+  wrapper + live bot seats → combine as `Home Large — 5 Seats` → Wi-Fi smoke
+  test → tag.
+
+Constraint from the owner: the Home LAN profile consumes a map preset like
+any other ruleset/config; mapgen knows nothing about the LAN profile.
+Phase 6 direction to preserve alongside these: rule modules, custom/event
+decks, procedural maps, themed house-rule presets — none implemented yet.
 
 ## Layout
 
